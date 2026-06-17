@@ -1,5 +1,9 @@
+import { createReadStream } from 'node:fs';
+import { mkdir, stat, writeFile } from 'node:fs/promises';
 import { createServer as createNodeHttpServer } from 'node:http';
+import { extname, join, resolve } from 'node:path';
 import { parse as parseUrl } from 'node:url';
+import { randomUUID } from 'node:crypto';
 
 import { HeaderMap } from '@apollo/server';
 
@@ -12,6 +16,31 @@ import {
   isSupportedSocialProvider,
   SocialAuthError,
 } from './socialAuth.mjs';
+
+const AUDIO_UPLOAD_ENDPOINT = '/api/radio/upload';
+const AUDIO_PUBLIC_PATH_PREFIX = '/media/audio/';
+const AUDIO_FILE_SIZE_LIMIT_BYTES = 20 * 1024 * 1024;
+const AUDIO_EXTENSION_BY_MIME = {
+  'audio/mpeg': '.mp3',
+  'audio/mp3': '.mp3',
+  'audio/wav': '.wav',
+  'audio/x-wav': '.wav',
+  'audio/ogg': '.ogg',
+  'audio/webm': '.webm',
+  'audio/mp4': '.m4a',
+  'audio/x-m4a': '.m4a',
+  'audio/aac': '.aac',
+  'audio/flac': '.flac',
+};
+const AUDIO_CONTENT_TYPE_BY_EXTENSION = {
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.webm': 'audio/webm',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.flac': 'audio/flac',
+};
 
 function setCorsHeaders(req, res) {
   const origin = req.headers.origin || '*';
@@ -56,6 +85,69 @@ function copyGraphqlResponse(res, httpGraphQLResponse) {
     res.setHeader(key, value);
   }
   res.statusCode = httpGraphQLResponse.status || 200;
+}
+
+function resolvePublicBaseUrl(req, env) {
+  const configured = String(env.PUBLIC_BASE_URL || '').trim();
+  if (configured) {
+    return configured.replace(/\/+$/, '');
+  }
+
+  const protocol = String(req.headers['x-forwarded-proto'] || '').trim() || 'http';
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || 'localhost').trim();
+  return `${protocol}://${host}`.replace(/\/+$/, '');
+}
+
+function resolveAudioStorageDir(env) {
+  const configured = String(env.AUDIO_UPLOAD_DIR || '').trim();
+  return configured ? resolve(configured) : resolve(process.cwd(), 'uploads', 'audio');
+}
+
+function sanitizeAudioBaseName(filename) {
+  return String(filename || '')
+    .trim()
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-zA-Zа-яА-ЯёЁ0-9_-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'track';
+}
+
+function detectAudioExtension({ mimeType, fileName }) {
+  const normalizedMimeType = String(mimeType || '').trim().toLowerCase();
+  if (AUDIO_EXTENSION_BY_MIME[normalizedMimeType]) {
+    return AUDIO_EXTENSION_BY_MIME[normalizedMimeType];
+  }
+
+  const normalizedExtension = extname(String(fileName || '').trim()).toLowerCase();
+  if (AUDIO_CONTENT_TYPE_BY_EXTENSION[normalizedExtension]) {
+    return normalizedExtension;
+  }
+
+  throw new Error('Поддерживаются только аудиофайлы mp3, wav, ogg, webm, m4a, aac и flac.');
+}
+
+function decodeBase64Audio(rawValue) {
+  const normalized = String(rawValue || '')
+    .replace(/^data:[^;]+;base64,/i, '')
+    .replace(/\s+/g, '');
+
+  if (!normalized) {
+    throw new Error('Файл не передан.');
+  }
+
+  if (!/^[A-Za-z0-9+/]+=*$/.test(normalized) || normalized.length % 4 !== 0) {
+    throw new Error('Некорректный формат аудиофайла.');
+  }
+
+  const buffer = Buffer.from(normalized, 'base64');
+  if (!buffer.length) {
+    throw new Error('Аудиофайл пустой.');
+  }
+  if (buffer.length > AUDIO_FILE_SIZE_LIMIT_BYTES) {
+    throw new Error('Аудиофайл слишком большой. Максимум 20 МБ.');
+  }
+  return buffer;
 }
 
 async function handleGraphqlRequest({ req, res, apolloServer, repo, jwtSecret }) {
@@ -174,6 +266,97 @@ async function handleSocialAuthRequest({ req, res, pathname, searchParams, repo,
   return true;
 }
 
+async function handleRadioUploadRequest({ req, res, pathname, repo, jwtSecret, env }) {
+  if (pathname !== AUDIO_UPLOAD_ENDPOINT) {
+    return false;
+  }
+
+  if (req.method !== 'POST') {
+    sendText(res, 405, 'Method not allowed');
+    return true;
+  }
+
+  const context = await buildContext({ req }, { repo, jwtSecret });
+  if (!context.currentUser) {
+    sendJson(res, 401, { error: 'Authentication required' });
+    return true;
+  }
+
+  const body = await readJsonBody(req);
+  const title = String(body?.title ?? '').trim();
+  if (!title) {
+    sendJson(res, 400, { error: 'Название аудио обязательно.' });
+    return true;
+  }
+
+  try {
+    const fileBuffer = decodeBase64Audio(body?.contentBase64);
+    const fileExtension = detectAudioExtension({
+      mimeType: body?.mimeType,
+      fileName: body?.fileName,
+    });
+    const storageDir = resolveAudioStorageDir(env);
+    await mkdir(storageDir, { recursive: true });
+
+    const storedFileName = `${Date.now()}-${sanitizeAudioBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
+    const storagePath = join(storageDir, storedFileName);
+    await writeFile(storagePath, fileBuffer);
+
+    const currentUser = context.currentUser;
+    const publicUrl = `${resolvePublicBaseUrl(req, env)}${AUDIO_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    const track = await repo.createRadioTrack({
+      title,
+      authorName: currentUser?.profile?.displayName || currentUser?.login || 'Автор',
+      durationSeconds: body?.durationSeconds,
+      audioUrl: publicUrl,
+    });
+
+    sendJson(res, 201, {
+      ok: true,
+      track,
+      storedFileName,
+      audioUrl: publicUrl,
+    });
+  } catch (error) {
+    sendJson(res, 400, {
+      error: error instanceof Error ? error.message : 'Не удалось загрузить аудио.',
+    });
+  }
+
+  return true;
+}
+
+async function handleAudioFileRequest({ req, res, pathname, env }) {
+  if (!pathname.startsWith(AUDIO_PUBLIC_PATH_PREFIX)) {
+    return false;
+  }
+
+  if (req.method !== 'GET') {
+    sendText(res, 405, 'Method not allowed');
+    return true;
+  }
+
+  const requestedFileName = decodeURIComponent(pathname.slice(AUDIO_PUBLIC_PATH_PREFIX.length));
+  if (!requestedFileName || requestedFileName.includes('/') || requestedFileName.includes('..')) {
+    sendJson(res, 400, { error: 'Invalid file path' });
+    return true;
+  }
+
+  const storagePath = join(resolveAudioStorageDir(env), requestedFileName);
+
+  try {
+    const fileStat = await stat(storagePath);
+    res.statusCode = 200;
+    res.setHeader('content-type', AUDIO_CONTENT_TYPE_BY_EXTENSION[extname(requestedFileName).toLowerCase()] || 'application/octet-stream');
+    res.setHeader('content-length', String(fileStat.size));
+    createReadStream(storagePath).pipe(res);
+  } catch {
+    sendJson(res, 404, { error: 'Audio file not found' });
+  }
+
+  return true;
+}
+
 export function createHttpServer({ apolloServer, repo, jwtSecret, env = process.env, fetchImpl = globalThis.fetch }) {
   apolloServer.assertStarted('createHttpServer');
 
@@ -191,6 +374,14 @@ export function createHttpServer({ apolloServer, repo, jwtSecret, env = process.
       const { pathname, searchParams } = url;
 
       if (await handleSocialAuthRequest({ req, res, pathname, searchParams, repo, jwtSecret, env, fetchImpl })) {
+        return;
+      }
+
+      if (await handleRadioUploadRequest({ req, res, pathname, repo, jwtSecret, env })) {
+        return;
+      }
+
+      if (await handleAudioFileRequest({ req, res, pathname, env })) {
         return;
       }
 

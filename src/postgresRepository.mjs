@@ -1015,6 +1015,47 @@ export function createPostgresRepository(pool) {
       return rows.map(contestFromRow);
     },
 
+    async createRadioTrack({ title, authorName = null, durationSeconds = null, audioUrl, sourceUrl = null, workId = null }) {
+      const normalizedTitle = String(title ?? '').trim();
+      if (!normalizedTitle) {
+        throw new Error('title is required');
+      }
+
+      const normalizedAudioUrl = normalizeOptionalText(audioUrl);
+      if (!normalizedAudioUrl) {
+        throw new Error('audioUrl is required');
+      }
+
+      const normalizedDuration = durationSeconds == null || durationSeconds === ''
+        ? null
+        : Math.max(0, Number.parseInt(durationSeconds, 10) || 0);
+
+      const { rows } = await pool.query(
+        `
+        insert into radio_tracks (
+          title,
+          author_name,
+          work_id,
+          duration_seconds,
+          audio_url,
+          source_url
+        )
+        values ($1, $2, $3, $4, $5, $6)
+        returning *
+        `,
+        [
+          normalizedTitle,
+          normalizeOptionalText(authorName),
+          workId || null,
+          normalizedDuration,
+          normalizedAudioUrl,
+          normalizeOptionalText(sourceUrl),
+        ],
+      );
+
+      return radioTrackFromRow(rows[0]);
+    },
+
     async listRadioTracks({ limit = 20, offset = 0 } = {}) {
       const page = buildLimitOffset(limit, offset);
       const { rows } = await pool.query(
