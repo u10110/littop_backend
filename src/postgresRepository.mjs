@@ -242,6 +242,12 @@ function buildLimitOffset(limit = 20, offset = 0) {
   return { limit: Math.min(Math.max(Number(limit) || 20, 1), 100), offset: Math.max(Number(offset) || 0, 0) };
 }
 
+function normalizeOptionalText(value) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return normalized || null;
+}
+
 export function createPostgresRepository(pool) {
   return {
     async ping() {
@@ -319,6 +325,35 @@ export function createPostgresRepository(pool) {
         [id],
       );
       return userFromRow(rows[0]);
+    },
+
+    async updateUserProfile({ userId, displayName, bio = null, city = null, websiteUrl = null }) {
+      const normalizedDisplayName = String(displayName ?? '').trim();
+      if (!normalizedDisplayName) {
+        throw new Error('displayName is required');
+      }
+
+      await pool.query(
+        `
+        insert into author_profiles (user_id, display_name, bio, city, website_url)
+        values ($1, $2, $3, $4, $5)
+        on conflict (user_id) do update set
+          display_name = excluded.display_name,
+          bio = excluded.bio,
+          city = excluded.city,
+          website_url = excluded.website_url,
+          updated_at = now()
+        `,
+        [
+          userId,
+          normalizedDisplayName,
+          normalizeOptionalText(bio),
+          normalizeOptionalText(city),
+          normalizeOptionalText(websiteUrl),
+        ],
+      );
+
+      return this.getUserById(userId);
     },
 
     async getAuthorByUserId(userId) {

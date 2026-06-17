@@ -48,6 +48,19 @@ function makeFakeRepo() {
     async getUserById(id) {
       return users.find((user) => String(user.id) === String(id)) ?? null;
     },
+    async updateUserProfile({ userId, displayName, bio = null, city = null, websiteUrl = null }) {
+      const user = users.find((item) => String(item.id) === String(userId));
+      if (!user) return null;
+      user.profile = {
+        ...user.profile,
+        displayName,
+        bio,
+        city,
+        websiteUrl,
+      };
+      user.updatedAt = new Date().toISOString();
+      return user;
+    },
     async listAuthors() {
       return users.map((user) => ({
         id: user.id,
@@ -159,6 +172,55 @@ test('register mutation returns token and user', async () => {
   assert.equal(result.body.singleResult.data.register.user.login, 'neo');
   assert.equal(result.body.singleResult.data.register.user.profile.displayName, 'Neo');
   assert.ok(result.body.singleResult.data.register.token);
+  await server.stop();
+});
+
+test('updateMyProfile saves current user profile fields', async () => {
+  const repo = makeFakeRepo();
+  const bootstrapUser = await repo.createUser({
+    email: 'cabinet@example.com',
+    login: 'cabinet',
+    passwordHash: 'hash',
+    displayName: 'Cabinet User'
+  });
+  const server = createApolloServer({ repo, jwtSecret: 'test-secret' });
+  await server.start();
+
+  const result = await server.executeOperation({
+    query: `mutation UpdateMyProfile($input: UpdateMyProfileInput!) {
+      updateMyProfile(input: $input) {
+        id
+        profile {
+          displayName
+          city
+          websiteUrl
+          bio
+        }
+      }
+    }`,
+    variables: {
+      input: {
+        displayName: 'Новый автор',
+        city: 'Москва',
+        websiteUrl: 'https://example.com',
+        bio: 'Обновлённое описание'
+      }
+    }
+  }, {
+    contextValue: {
+      repo,
+      jwtSecret: 'test-secret',
+      currentUser: bootstrapUser,
+      authHeader: ''
+    }
+  });
+
+  assert.equal(result.body.kind, 'single');
+  assert.equal(result.body.singleResult.data.updateMyProfile.profile.displayName, 'Новый автор');
+  assert.equal(result.body.singleResult.data.updateMyProfile.profile.city, 'Москва');
+  assert.equal(result.body.singleResult.data.updateMyProfile.profile.websiteUrl, 'https://example.com');
+  assert.equal(result.body.singleResult.data.updateMyProfile.profile.bio, 'Обновлённое описание');
+
   await server.stop();
 });
 

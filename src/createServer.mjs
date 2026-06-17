@@ -197,6 +197,13 @@ const typeDefs = `#graphql
     body: String!
   }
 
+  input UpdateMyProfileInput {
+    displayName: String!
+    bio: String
+    city: String
+    websiteUrl: String
+  }
+
   type Query {
     health: Health!
     me: User
@@ -215,6 +222,7 @@ const typeDefs = `#graphql
   type Mutation {
     register(input: RegisterInput!): AuthPayload!
     login(input: LoginInput!): AuthPayload!
+    updateMyProfile(input: UpdateMyProfileInput!): User!
     createWork(input: CreateWorkInput!): Work!
     rateWork(workId: ID!, rating: Int!): WorkRating!
     addWorkComment(workId: ID!, body: String!, parentCommentId: ID): WorkComment!
@@ -273,6 +281,22 @@ const resolvers = {
       }
       const token = issueToken(user, jwtSecret);
       return { token, user };
+    },
+    updateMyProfile: async (_, { input }, { currentUser, repo }) => {
+      const user = requireAuth(currentUser);
+      const displayName = typeof input.displayName === 'string' ? input.displayName.trim() : '';
+      if (!displayName) {
+        throw new GraphQLError('Display name is required', {
+          extensions: { code: 'BAD_USER_INPUT' },
+        });
+      }
+      return repo.updateUserProfile({
+        userId: user.id,
+        displayName,
+        bio: input.bio,
+        city: input.city,
+        websiteUrl: input.websiteUrl,
+      });
     },
     createWork: async (_, { input }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
