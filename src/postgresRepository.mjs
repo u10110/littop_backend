@@ -248,6 +248,43 @@ function normalizeOptionalText(value) {
   return normalized || null;
 }
 
+function normalizeSocialProvider(value) {
+  const provider = String(value ?? '').trim().toLowerCase();
+  if (!provider) throw new Error('provider is required');
+  return provider;
+}
+
+function buildSyntheticSocialEmail(provider, providerUserId) {
+  return `${provider}-${providerUserId}@social.littop.local`;
+}
+
+function normalizeLoginCandidate(value, fallback = 'author') {
+  return slugify(value || fallback).slice(0, 48);
+}
+
+async function buildUniqueLogin(client, baseCandidate) {
+  const root = normalizeLoginCandidate(baseCandidate, 'author');
+
+  for (let suffix = 0; suffix < 500; suffix += 1) {
+    const candidate = suffix === 0 ? root : `${root}-${suffix + 1}`;
+    const { rowCount } = await client.query(
+      `
+      select 1
+      from users
+      where login = $1
+      limit 1
+      `,
+      [candidate],
+    );
+
+    if (!rowCount) {
+      return candidate;
+    }
+  }
+
+  throw new Error('Could not allocate unique login for social auth user');
+}
+
 export function createPostgresRepository(pool) {
   return {
     async ping() {
@@ -325,6 +362,173 @@ export function createPostgresRepository(pool) {
         [id],
       );
       return userFromRow(rows[0]);
+    },
+
+    async findUserByEmail(email) {
+      const normalizedEmail = normalizeOptionalText(email);
+      if (!normalizedEmail) return null;
+
+      const { rows } = await pool.query(
+        `
+        select u.*, ap.display_name, ap.bio, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+        from users u
+        left join author_profiles ap on ap.user_id = u.id
+        where u.email = $1
+        limit 1
+        `,
+        [normalizedEmail],
+      );
+      return userFromRow(rows[0]);
+    },
+
+    async getUserBySocialAccount({ provider, providerUserId }) {
+      const normalizedProvider = normalizeSocialProvider(provider);
+      const normalizedProviderUserId = String(providerUserId ?? '').trim();
+      if (!normalizedProviderUserId) return null;
+
+      const { rows } = await pool.query(
+        `
+        select u.*, ap.display_name, ap.bio, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+        from social_accounts sa
+        join users u on u.id = sa.user_id
+        left join author_profiles ap on ap.user_id = u.id
+        where sa.provider = $1 and sa.provider_user_id = $2
+        limit 1
+        `,
+        [normalizedProvider, normalizedProviderUserId],
+      );
+      return userFromRow(rows[0]);
+    },
+
+    async linkSocialAccount({
+      userId,
+      provider,
+      providerUserId,
+      providerEmail = null,
+      providerLogin = null,
+      avatarUrl = null,
+      profileUrl = null,
+    }) {
+      const normalizedProvider = normalizeSocialProvider(provider);
+      const normalizedProviderUserId = String(providerUserId ?? '').trim();
+      if (!normalizedProviderUserId) {
+        throw new Error('providerUserId is required');
+      }
+
+      await pool.query(
+        `
+        insert into social_accounts (
+          user_id,
+          provider,
+          provider_user_id,
+          provider_email,
+          provider_login,
+          profile_url,
+          avatar_url
+        )
+        values ($1, $2, $3, $4, $5, $6, $7)
+        on conflict (provider, provider_user_id) do update set
+          user_id = excluded.user_id,
+          provider_email = excluded.provider_email,
+          provider_login = excluded.provider_login,
+          profile_url = excluded.profile_url,
+          avatar_url = excluded.avatar_url,
+          updated_at = now()
+        `,
+        [
+          userId,
+          normalizedProvider,
+          normalizedProviderUserId,
+          normalizeOptionalText(providerEmail),
+          normalizeOptionalText(providerLogin),
+          normalizeOptionalText(profileUrl),
+          normalizeOptionalText(avatarUrl),
+        ],
+      );
+    },
+
+    async createUserFromSocialAuth({
+      provider,
+      providerUserId,
+      email = null,
+      displayName,
+      loginHint = null,
+      avatarUrl = null,
+      profileUrl = null,
+      passwordHash,
+    }) {
+      const normalizedProvider = normalizeSocialProvider(provider);
+      const normalizedProviderUserId = String(providerUserId ?? '').trim();
+      const normalizedDisplayName = String(displayName ?? '').trim() || `${normalizedProvider.toUpperCase()} author`;
+      const normalizedEmail = normalizeOptionalText(email) || buildSyntheticSocialEmail(normalizedProvider, normalizedProviderUserId);
+
+      if (!normalizedProviderUserId) {
+        throw new Error('providerUserId is required');
+      }
+      if (!passwordHash) {
+        throw new Error('passwordHash is required');
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+
+        const login = await buildUniqueLogin(
+          client,
+          normalizeLoginCandidate(loginHint, `${normalizedProvider}-${normalizedProviderUserId}`),
+        );
+
+        const insertedUser = await client.query(
+          `
+          insert into users (email, login, password_hash)
+          values ($1, $2, $3)
+          returning id
+          `,
+          [normalizedEmail, login, passwordHash],
+        );
+
+        const userId = insertedUser.rows[0].id;
+
+        await client.query(
+          `
+          insert into author_profiles (user_id, display_name, avatar_url)
+          values ($1, $2, $3)
+          `,
+          [userId, normalizedDisplayName, normalizeOptionalText(avatarUrl)],
+        );
+
+        await client.query(
+          `
+          insert into social_accounts (
+            user_id,
+            provider,
+            provider_user_id,
+            provider_email,
+            provider_login,
+            profile_url,
+            avatar_url
+          )
+          values ($1, $2, $3, $4, $5, $6, $7)
+          `,
+          [
+            userId,
+            normalizedProvider,
+            normalizedProviderUserId,
+            normalizeOptionalText(email),
+            normalizeOptionalText(loginHint),
+            normalizeOptionalText(profileUrl),
+            normalizeOptionalText(avatarUrl),
+          ],
+        );
+
+        await client.query('commit');
+        return await this.getUserById(userId);
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
     },
 
     async updateUserProfile({ userId, displayName, bio = null, city = null, websiteUrl = null }) {

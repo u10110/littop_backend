@@ -102,3 +102,14 @@ Authorization: Bearer <token>
 ## Notes
 
 This backend is generated from the inferred production schema we built for the provided frontend repository. The original repo did not contain backend ORM models or an existing API layer.
+
+SOC QAuth
+1. заполнить .env:
+   - VK_CLIENT_ID
+   - VK_CLIENT_SECRET
+   - OK_CLIENT_ID
+   - OK_CLIENT_SECRET
+   - OK_APPLICATION_KEY
+   - PUBLIC_BASE_URL
+2. применить миграцию migrations/003_social_auth.sql
+3. перезапустить backend
