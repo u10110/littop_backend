@@ -396,7 +396,6 @@ async function handleRadioUploadRequest({ req, res, pathname, repo, jwtSecret, e
 async function handleProfileImageUploadRequest({ req, res, pathname, repo, jwtSecret, env }) {
   
   if (pathname !== PROFILE_IMAGE_UPLOAD_ENDPOINT) {
-    sendJson(res, 401, { error: pathname });
     return false;
   }
 
@@ -480,6 +479,7 @@ async function handleProfileImageFileRequest({ req, res, pathname, env }) {
   }
 
   if (req.method !== 'GET') {
+    sendText(res, 405, 'Method not allowed');
     return true;
   }
 
