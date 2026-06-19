@@ -480,7 +480,6 @@ async function handleProfileImageFileRequest({ req, res, pathname, env }) {
   }
 
   if (req.method !== 'GET') {
-    sendText(res, 405, 'Method not allowed');
     return true;
   }
 
