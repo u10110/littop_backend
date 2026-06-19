@@ -520,7 +520,7 @@ export function createHttpServer({ apolloServer, repo, jwtSecret, env = process.
 
       const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
       const { pathname, searchParams } = url;
-
+      console.log(pathname, req.url)
       if (await handleSocialAuthRequest({ req, res, pathname, searchParams, repo, jwtSecret, env, fetchImpl })) {
         return;
       }
