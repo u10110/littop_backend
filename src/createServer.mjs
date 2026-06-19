@@ -13,6 +13,8 @@ const typeDefs = `#graphql
   type AuthorProfile {
     displayName: String!
     bio: String
+    avatarUrl: String
+    coverImageUrl: String
     city: String
     websiteUrl: String
     ratingTotal: Float!
@@ -40,6 +42,8 @@ const typeDefs = `#graphql
     login: String!
     displayName: String!
     bio: String
+    avatarUrl: String
+    coverImageUrl: String
     city: String
     websiteUrl: String
     ratingTotal: Float!
@@ -191,6 +195,17 @@ const typeDefs = `#graphql
     projectFormat: String
   }
 
+  input UpdateWorkInput {
+    sectionCode: String!
+    genreSlug: String
+    title: String!
+    summary: String
+    body: String
+    excerpt: String
+    status: String = "published"
+    projectFormat: String
+  }
+
   input CreateForumTopicInput {
     sectionSlug: String!
     title: String!
@@ -200,6 +215,8 @@ const typeDefs = `#graphql
   input UpdateMyProfileInput {
     displayName: String!
     bio: String
+    avatarUrl: String
+    coverImageUrl: String
     city: String
     websiteUrl: String
   }
@@ -224,10 +241,13 @@ const typeDefs = `#graphql
     login(input: LoginInput!): AuthPayload!
     updateMyProfile(input: UpdateMyProfileInput!): User!
     createWork(input: CreateWorkInput!): Work!
+    updateWork(workId: ID!, input: UpdateWorkInput!): Work!
+    deleteWork(workId: ID!): Work!
     rateWork(workId: ID!, rating: Int!): WorkRating!
     addWorkComment(workId: ID!, body: String!, parentCommentId: ID): WorkComment!
     createForumTopic(input: CreateForumTopicInput!): ForumTopic!
     createForumPost(topicId: ID!, body: String!, parentPostId: ID): ForumPost!
+    updateForumPost(postId: ID!, body: String!): ForumPost!
   }
 `;
 
@@ -247,10 +267,22 @@ const resolvers = {
     authors: async (_, args, { repo }) => repo.listAuthors(args),
     author: async (_, args, { repo }) => repo.getAuthor(args),
     works: async (_, args, { repo }) => repo.listWorks(args),
-    work: async (_, args, { repo }) => {
-      if (args.id) return repo.getWorkById(args.id);
-      if (args.slug) return repo.getWorkBySlug(args.slug);
-      return null;
+    work: async (_, args, { repo, currentUser }) => {
+      const work = args.id
+        ? await repo.getWorkById(args.id)
+        : args.slug
+          ? await repo.getWorkBySlug(args.slug)
+          : null;
+
+      if (!work) {
+        return null;
+      }
+
+      if (work.status !== 'published' && String(currentUser?.id ?? '') !== String(work.author?.id ?? work.authorUserId ?? '')) {
+        return null;
+      }
+
+      return work;
     },
     workComments: async (_, args, { repo }) => repo.listWorkComments(args),
     forumSections: async (_, __, { repo }) => repo.listForumSections(),
@@ -294,6 +326,8 @@ const resolvers = {
         userId: user.id,
         displayName,
         bio: input.bio,
+        avatarUrl: input.avatarUrl,
+        coverImageUrl: input.coverImageUrl,
         city: input.city,
         websiteUrl: input.websiteUrl,
       });
@@ -301,6 +335,14 @@ const resolvers = {
     createWork: async (_, { input }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
       return repo.createWork({ ...input, authorUserId: user.id });
+    },
+    updateWork: async (_, { workId, input }, { currentUser, repo }) => {
+      const user = requireAuth(currentUser);
+      return repo.updateWork({ workId, authorUserId: user.id, ...input });
+    },
+    deleteWork: async (_, { workId }, { currentUser, repo }) => {
+      const user = requireAuth(currentUser);
+      return repo.softDeleteWork({ workId, authorUserId: user.id });
     },
     rateWork: async (_, { workId, rating }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
@@ -317,6 +359,10 @@ const resolvers = {
     createForumPost: async (_, { topicId, body, parentPostId }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
       return repo.createForumPost({ topicId, body, parentPostId, authorUserId: user.id });
+    },
+    updateForumPost: async (_, { postId, body }, { currentUser, repo }) => {
+      const user = requireAuth(currentUser);
+      return repo.updateForumPost({ postId, body, authorUserId: user.id });
     },
   },
   User: {

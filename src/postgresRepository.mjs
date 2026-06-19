@@ -23,6 +23,8 @@ function userFromRow(row) {
     profile: row.display_name == null ? null : {
       displayName: row.display_name,
       bio: row.bio,
+      avatarUrl: row.avatar_url,
+      coverImageUrl: row.cover_image_url,
       city: row.city,
       websiteUrl: row.website_url,
       ratingTotal: Number(row.rating_total ?? 0),
@@ -41,6 +43,8 @@ function authorFromRow(row) {
     login: row.login,
     displayName: row.display_name,
     bio: row.bio,
+    avatarUrl: row.avatar_url,
+    coverImageUrl: row.cover_image_url,
     city: row.city,
     websiteUrl: row.website_url,
     ratingTotal: Number(row.rating_total ?? 0),
@@ -79,6 +83,8 @@ function workFromRow(row) {
       login: row.author_login,
       displayName: row.author_display_name,
       bio: row.author_bio,
+      avatarUrl: row.author_avatar_url,
+      coverImageUrl: row.author_cover_image_url,
       city: row.author_city,
       websiteUrl: row.author_website_url,
       ratingTotal: Number(row.author_rating_total ?? 0),
@@ -109,6 +115,8 @@ function workCommentFromRow(row) {
       login: row.author_login,
       displayName: row.author_display_name,
       bio: row.author_bio,
+      avatarUrl: row.author_avatar_url,
+      coverImageUrl: row.author_cover_image_url,
       city: row.author_city,
       websiteUrl: row.author_website_url,
       ratingTotal: Number(row.author_rating_total ?? 0),
@@ -159,6 +167,8 @@ function forumTopicFromRow(row) {
       login: row.author_login,
       displayName: row.author_display_name,
       bio: row.author_bio,
+      avatarUrl: row.author_avatar_url,
+      coverImageUrl: row.author_cover_image_url,
       city: row.author_city,
       websiteUrl: row.author_website_url,
       ratingTotal: Number(row.author_rating_total ?? 0),
@@ -189,6 +199,8 @@ function forumPostFromRow(row) {
       login: row.author_login,
       displayName: row.author_display_name,
       bio: row.author_bio,
+      avatarUrl: row.author_avatar_url,
+      coverImageUrl: row.author_cover_image_url,
       city: row.author_city,
       websiteUrl: row.author_website_url,
       ratingTotal: Number(row.author_rating_total ?? 0),
@@ -295,7 +307,7 @@ export function createPostgresRepository(pool) {
     async findUserByEmailOrLogin(email, login) {
       const { rows } = await pool.query(
         `
-        select u.*, ap.display_name, ap.bio, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         left join author_profiles ap on ap.user_id = u.id
         where u.email = $1 or u.login = $2
@@ -309,7 +321,7 @@ export function createPostgresRepository(pool) {
     async getUserByIdentifier(identifier) {
       const { rows } = await pool.query(
         `
-        select u.*, ap.display_name, ap.bio, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         left join author_profiles ap on ap.user_id = u.id
         where u.email = $1 or u.login = $1
@@ -353,7 +365,7 @@ export function createPostgresRepository(pool) {
     async getUserById(id) {
       const { rows } = await pool.query(
         `
-        select u.*, ap.display_name, ap.bio, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         left join author_profiles ap on ap.user_id = u.id
         where u.id = $1
@@ -370,7 +382,7 @@ export function createPostgresRepository(pool) {
 
       const { rows } = await pool.query(
         `
-        select u.*, ap.display_name, ap.bio, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         left join author_profiles ap on ap.user_id = u.id
         where u.email = $1
@@ -388,7 +400,7 @@ export function createPostgresRepository(pool) {
 
       const { rows } = await pool.query(
         `
-        select u.*, ap.display_name, ap.bio, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from social_accounts sa
         join users u on u.id = sa.user_id
         left join author_profiles ap on ap.user_id = u.id
@@ -531,7 +543,7 @@ export function createPostgresRepository(pool) {
       }
     },
 
-    async updateUserProfile({ userId, displayName, bio = null, city = null, websiteUrl = null }) {
+    async updateUserProfile({ userId, displayName, bio = null, avatarUrl = undefined, coverImageUrl = undefined, city = null, websiteUrl = null }) {
       const normalizedDisplayName = String(displayName ?? '').trim();
       if (!normalizedDisplayName) {
         throw new Error('displayName is required');
@@ -539,11 +551,13 @@ export function createPostgresRepository(pool) {
 
       await pool.query(
         `
-        insert into author_profiles (user_id, display_name, bio, city, website_url)
-        values ($1, $2, $3, $4, $5)
+        insert into author_profiles (user_id, display_name, bio, avatar_url, cover_image_url, city, website_url)
+        values ($1, $2, $3, $4, $5, $6, $7)
         on conflict (user_id) do update set
           display_name = excluded.display_name,
           bio = excluded.bio,
+          avatar_url = excluded.avatar_url,
+          cover_image_url = excluded.cover_image_url,
           city = excluded.city,
           website_url = excluded.website_url,
           updated_at = now()
@@ -552,6 +566,8 @@ export function createPostgresRepository(pool) {
           userId,
           normalizedDisplayName,
           normalizeOptionalText(bio),
+          normalizeOptionalText(avatarUrl),
+          normalizeOptionalText(coverImageUrl),
           normalizeOptionalText(city),
           normalizeOptionalText(websiteUrl),
         ],
@@ -564,7 +580,7 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select u.id, u.email, u.login, u.registered_at, u.created_at, u.updated_at,
-               ap.display_name, ap.bio, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         join author_profiles ap on ap.user_id = u.id
         where u.id = $1
@@ -590,7 +606,7 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select u.id, u.email, u.login, u.registered_at, u.created_at, u.updated_at,
-               ap.display_name, ap.bio, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         join author_profiles ap on ap.user_id = u.id
         ${where}
@@ -608,7 +624,7 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select u.id, u.email, u.login, u.registered_at, u.created_at, u.updated_at,
-               ap.display_name, ap.bio, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         join author_profiles ap on ap.user_id = u.id
         where ${field}
@@ -650,7 +666,7 @@ export function createPostgresRepository(pool) {
         select w.*, ws.code as section_code, wg.slug as genre_slug,
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
-               ap.display_name as author_display_name, ap.bio as author_bio, ap.city as author_city,
+               ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
                ap.website_url as author_website_url, ap.rating_total as author_rating_total,
                ap.works_count_cached as author_works_count_cached, ap.is_classic as author_is_classic,
                ap.is_featured as author_is_featured
@@ -674,7 +690,7 @@ export function createPostgresRepository(pool) {
         select w.*, ws.code as section_code, wg.slug as genre_slug,
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
-               ap.display_name as author_display_name, ap.bio as author_bio, ap.city as author_city,
+               ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
                ap.website_url as author_website_url, ap.rating_total as author_rating_total,
                ap.works_count_cached as author_works_count_cached, ap.is_classic as author_is_classic,
                ap.is_featured as author_is_featured
@@ -697,7 +713,7 @@ export function createPostgresRepository(pool) {
         select w.*, ws.code as section_code, wg.slug as genre_slug,
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
-               ap.display_name as author_display_name, ap.bio as author_bio, ap.city as author_city,
+               ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
                ap.website_url as author_website_url, ap.rating_total as author_rating_total,
                ap.works_count_cached as author_works_count_cached, ap.is_classic as author_is_classic,
                ap.is_featured as author_is_featured
@@ -737,11 +753,106 @@ export function createPostgresRepository(pool) {
           [authorUserId, section.rows[0].id, genreId, title, slug, summary, body, excerpt, status, projectFormat, publishedAt],
         );
         await client.query(
-          'update author_profiles set works_count_cached = (select count(*) from works where author_user_id = $1) where user_id = $1',
+          "update author_profiles set works_count_cached = (select count(*) from works where author_user_id = $1 and status <> 'archived') where user_id = $1",
           [authorUserId],
         );
         await client.query('commit');
         return await this.getWorkById(inserted.rows[0].id);
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async updateWork({ workId, authorUserId, sectionCode, genreSlug = null, title, summary = null, body = null, excerpt = null, status = 'published', projectFormat = null }) {
+      const normalizedTitle = String(title ?? '').trim();
+      if (!normalizedTitle) {
+        throw new Error('title is required');
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        const existing = await client.query(
+          `
+          select id, author_user_id, published_at
+          from works
+          where id = $1
+          limit 1
+          `,
+          [workId],
+        );
+        const current = existing.rows[0];
+        if (!current) {
+          throw new Error('Work not found');
+        }
+        if (String(current.author_user_id) !== String(authorUserId)) {
+          throw new Error('Only the owner can edit this work');
+        }
+
+        const section = await client.query('select id from work_sections where code = $1 limit 1', [sectionCode]);
+        if (!section.rows[0]) throw new Error(`Unknown sectionCode: ${sectionCode}`);
+
+        let genreId = null;
+        if (genreSlug) {
+          const genre = await client.query('select id from work_genres where slug = $1 limit 1', [genreSlug]);
+          if (!genre.rows[0]) throw new Error(`Unknown genreSlug: ${genreSlug}`);
+          genreId = genre.rows[0].id;
+        }
+
+        const publishedAt = status === 'published' ? (current.published_at ?? new Date()) : current.published_at;
+        await client.query(
+          `
+          update works
+          set section_id = $1,
+              genre_id = $2,
+              title = $3,
+              summary = $4,
+              body = $5,
+              excerpt = $6,
+              status = $7,
+              project_format = $8,
+              published_at = $9,
+              updated_at = now()
+          where id = $10 and author_user_id = $11
+          `,
+          [section.rows[0].id, genreId, normalizedTitle, summary, body, excerpt, status, projectFormat, publishedAt, workId, authorUserId],
+        );
+        await client.query('commit');
+        return await this.getWorkById(workId);
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async softDeleteWork({ workId, authorUserId }) {
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        const updated = await client.query(
+          `
+          update works
+          set status = 'archived',
+              updated_at = now()
+          where id = $1 and author_user_id = $2
+          returning id
+          `,
+          [workId, authorUserId],
+        );
+        if (!updated.rows[0]) {
+          throw new Error('Only the owner can delete this work');
+        }
+        await client.query(
+          "update author_profiles set works_count_cached = (select count(*) from works where author_user_id = $1 and status <> 'archived') where user_id = $1",
+          [authorUserId],
+        );
+        await client.query('commit');
+        return await this.getWorkById(workId);
       } catch (error) {
         await client.query('rollback');
         throw error;
@@ -813,7 +924,7 @@ export function createPostgresRepository(pool) {
         await client.query('commit');
         const comment = inserted.rows[0];
         const author = await this.getAuthorByUserId(userId);
-        return workCommentFromRow({ ...comment, author_login: author?.login, author_email: author?.email, author_display_name: author?.displayName, author_bio: author?.bio, author_city: author?.city, author_website_url: author?.websiteUrl, author_rating_total: author?.ratingTotal, author_works_count_cached: author?.worksCountCached, author_is_classic: author?.isClassic, author_is_featured: author?.isFeatured, author_registered_at: author?.registeredAt, author_created_at: author?.createdAt, author_updated_at: author?.updatedAt, author_id: author?.id });
+        return workCommentFromRow({ ...comment, author_login: author?.login, author_email: author?.email, author_display_name: author?.displayName, author_bio: author?.bio, author_avatar_url: author?.avatarUrl, author_cover_image_url: author?.coverImageUrl, author_city: author?.city, author_website_url: author?.websiteUrl, author_rating_total: author?.ratingTotal, author_works_count_cached: author?.worksCountCached, author_is_classic: author?.isClassic, author_is_featured: author?.isFeatured, author_registered_at: author?.registeredAt, author_created_at: author?.createdAt, author_updated_at: author?.updatedAt, author_id: author?.id });
       } catch (error) {
         await client.query('rollback');
         throw error;
@@ -828,7 +939,7 @@ export function createPostgresRepository(pool) {
         `
         select wc.*, u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
-               ap.display_name as author_display_name, ap.bio as author_bio, ap.city as author_city,
+               ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
                ap.website_url as author_website_url, ap.rating_total as author_rating_total,
                ap.works_count_cached as author_works_count_cached, ap.is_classic as author_is_classic,
                ap.is_featured as author_is_featured
@@ -868,7 +979,7 @@ export function createPostgresRepository(pool) {
         select ft.*, fs.slug as section_slug,
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
-               ap.display_name as author_display_name, ap.bio as author_bio, ap.city as author_city,
+               ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
                ap.website_url as author_website_url, ap.rating_total as author_rating_total,
                ap.works_count_cached as author_works_count_cached, ap.is_classic as author_is_classic,
                ap.is_featured as author_is_featured,
@@ -895,7 +1006,7 @@ export function createPostgresRepository(pool) {
         select ft.*, fs.slug as section_slug,
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
-               ap.display_name as author_display_name, ap.bio as author_bio, ap.city as author_city,
+               ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
                ap.website_url as author_website_url, ap.rating_total as author_rating_total,
                ap.works_count_cached as author_works_count_cached, ap.is_classic as author_is_classic,
                ap.is_featured as author_is_featured,
@@ -944,6 +1055,20 @@ export function createPostgresRepository(pool) {
       const client = await pool.connect();
       try {
         await client.query('begin');
+        if (parentPostId != null) {
+          const parent = await client.query(
+            `
+            select id
+            from forum_posts
+            where id = $1 and topic_id = $2
+            limit 1
+            `,
+            [parentPostId, topicId],
+          );
+          if (!parent.rows[0]) {
+            throw new Error('Parent post not found in this topic');
+          }
+        }
         const inserted = await client.query(
           `
           insert into forum_posts (topic_id, author_user_id, parent_post_id, body)
@@ -959,7 +1084,7 @@ export function createPostgresRepository(pool) {
         await client.query('commit');
         const post = inserted.rows[0];
         const author = await this.getAuthorByUserId(authorUserId);
-        return forumPostFromRow({ ...post, author_id: author?.id, author_email: author?.email, author_login: author?.login, author_display_name: author?.displayName, author_bio: author?.bio, author_city: author?.city, author_website_url: author?.websiteUrl, author_rating_total: author?.ratingTotal, author_works_count_cached: author?.worksCountCached, author_is_classic: author?.isClassic, author_is_featured: author?.isFeatured, author_registered_at: author?.registeredAt, author_created_at: author?.createdAt, author_updated_at: author?.updatedAt });
+        return forumPostFromRow({ ...post, author_id: author?.id, author_email: author?.email, author_login: author?.login, author_display_name: author?.displayName, author_bio: author?.bio, author_avatar_url: author?.avatarUrl, author_cover_image_url: author?.coverImageUrl, author_city: author?.city, author_website_url: author?.websiteUrl, author_rating_total: author?.ratingTotal, author_works_count_cached: author?.worksCountCached, author_is_classic: author?.isClassic, author_is_featured: author?.isFeatured, author_registered_at: author?.registeredAt, author_created_at: author?.createdAt, author_updated_at: author?.updatedAt });
       } catch (error) {
         await client.query('rollback');
         throw error;
@@ -968,12 +1093,35 @@ export function createPostgresRepository(pool) {
       }
     },
 
+    async updateForumPost({ postId, authorUserId, body }) {
+      const normalizedBody = String(body ?? '').trim();
+      if (!normalizedBody) {
+        throw new Error('body is required');
+      }
+
+      const { rows } = await pool.query(
+        `
+        update forum_posts
+        set body = $1,
+            updated_at = now()
+        where id = $2 and author_user_id = $3
+        returning *
+        `,
+        [normalizedBody, postId, authorUserId],
+      );
+      if (!rows[0]) {
+        throw new Error('Only the owner can edit this message');
+      }
+      const author = await this.getAuthorByUserId(authorUserId);
+      return forumPostFromRow({ ...rows[0], author_id: author?.id, author_email: author?.email, author_login: author?.login, author_display_name: author?.displayName, author_bio: author?.bio, author_avatar_url: author?.avatarUrl, author_cover_image_url: author?.coverImageUrl, author_city: author?.city, author_website_url: author?.websiteUrl, author_rating_total: author?.ratingTotal, author_works_count_cached: author?.worksCountCached, author_is_classic: author?.isClassic, author_is_featured: author?.isFeatured, author_registered_at: author?.registeredAt, author_created_at: author?.createdAt, author_updated_at: author?.updatedAt });
+    },
+
     async listForumPosts(topicId) {
       const { rows } = await pool.query(
         `
         select fp.*, u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
-               ap.display_name as author_display_name, ap.bio as author_bio, ap.city as author_city,
+               ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
                ap.website_url as author_website_url, ap.rating_total as author_rating_total,
                ap.works_count_cached as author_works_count_cached, ap.is_classic as author_is_classic,
                ap.is_featured as author_is_featured
