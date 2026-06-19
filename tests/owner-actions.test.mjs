@@ -72,6 +72,7 @@ function makeRepo() {
     userId: user.id,
     parentPostId: null,
     body: 'Старый комментарий',
+    imageUrl: null,
     status: 'visible',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -123,11 +124,12 @@ function makeRepo() {
       work.author = authorView();
       return { ...work };
     },
-    async updateForumPost({ postId, authorUserId, body }) {
+    async updateForumPost({ postId, authorUserId, body, imageUrl = null }) {
       if (String(postId) !== String(forumPost.id) || String(authorUserId) !== String(user.id)) {
         throw new Error('Only the owner can edit this post');
       }
       forumPost.body = body;
+      forumPost.imageUrl = imageUrl;
       forumPost.updatedAt = new Date().toISOString();
       forumPost.author = authorView();
       return { ...forumPost };
@@ -255,15 +257,17 @@ test('forum post editing is limited to owner', async () => {
   await server.start();
 
   const updated = await server.executeOperation({
-    query: `mutation UpdateForumPost($postId: ID!, $body: String!) {
-      updateForumPost(postId: $postId, body: $body) {
+    query: `mutation UpdateForumPost($postId: ID!, $body: String!, $imageUrl: String) {
+      updateForumPost(postId: $postId, body: $body, imageUrl: $imageUrl) {
         id
         body
+        imageUrl
       }
     }`,
     variables: {
       postId: '501',
       body: 'Исправленный комментарий',
+      imageUrl: 'https://cdn.test/forum-post.webp',
     },
   }, {
     contextValue: { repo, jwtSecret: 'test-secret', currentUser, authHeader: '' },
@@ -271,6 +275,7 @@ test('forum post editing is limited to owner', async () => {
 
   assert.equal(updated.body.kind, 'single');
   assert.equal(updated.body.singleResult.data.updateForumPost.body, 'Исправленный комментарий');
+  assert.equal(updated.body.singleResult.data.updateForumPost.imageUrl, 'https://cdn.test/forum-post.webp');
 
   const denied = await server.executeOperation({
     query: `mutation UpdateForumPost($postId: ID!, $body: String!) {

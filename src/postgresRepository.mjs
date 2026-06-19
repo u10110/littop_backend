@@ -190,6 +190,7 @@ function forumPostFromRow(row) {
     userId: row.author_user_id,
     parentPostId: row.parent_post_id,
     body: row.body,
+    imageUrl: row.image_url,
     status: row.status,
     createdAt: row.created_at?.toISOString?.() ?? row.created_at,
     updatedAt: row.updated_at?.toISOString?.() ?? row.updated_at,
@@ -1051,7 +1052,7 @@ export function createPostgresRepository(pool) {
       }
     },
 
-    async createForumPost({ topicId, authorUserId, body, parentPostId = null }) {
+    async createForumPost({ topicId, authorUserId, body, parentPostId = null, imageUrl = null }) {
       const client = await pool.connect();
       try {
         await client.query('begin');
@@ -1071,11 +1072,11 @@ export function createPostgresRepository(pool) {
         }
         const inserted = await client.query(
           `
-          insert into forum_posts (topic_id, author_user_id, parent_post_id, body)
-          values ($1, $2, $3, $4)
+          insert into forum_posts (topic_id, author_user_id, parent_post_id, body, image_url)
+          values ($1, $2, $3, $4, $5)
           returning *
           `,
-          [topicId, authorUserId, parentPostId, body],
+          [topicId, authorUserId, parentPostId, body, normalizeOptionalText(imageUrl)],
         );
         await client.query(
           `update forum_topics set replies_count = replies_count + 1, last_post_at = now() where id = $1`,
@@ -1093,7 +1094,7 @@ export function createPostgresRepository(pool) {
       }
     },
 
-    async updateForumPost({ postId, authorUserId, body }) {
+    async updateForumPost({ postId, authorUserId, body, imageUrl = null }) {
       const normalizedBody = String(body ?? '').trim();
       if (!normalizedBody) {
         throw new Error('body is required');
@@ -1103,11 +1104,12 @@ export function createPostgresRepository(pool) {
         `
         update forum_posts
         set body = $1,
+            image_url = $2,
             updated_at = now()
-        where id = $2 and author_user_id = $3
+        where id = $3 and author_user_id = $4
         returning *
         `,
-        [normalizedBody, postId, authorUserId],
+        [normalizedBody, normalizeOptionalText(imageUrl), postId, authorUserId],
       );
       if (!rows[0]) {
         throw new Error('Only the owner can edit this message');

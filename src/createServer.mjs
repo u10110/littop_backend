@@ -131,6 +131,7 @@ const typeDefs = `#graphql
     userId: ID!
     parentPostId: ID
     body: String!
+    imageUrl: String
     status: String!
     createdAt: String!
     updatedAt: String!
@@ -246,8 +247,8 @@ const typeDefs = `#graphql
     rateWork(workId: ID!, rating: Int!): WorkRating!
     addWorkComment(workId: ID!, body: String!, parentCommentId: ID): WorkComment!
     createForumTopic(input: CreateForumTopicInput!): ForumTopic!
-    createForumPost(topicId: ID!, body: String!, parentPostId: ID): ForumPost!
-    updateForumPost(postId: ID!, body: String!): ForumPost!
+    createForumPost(topicId: ID!, body: String!, parentPostId: ID, imageUrl: String): ForumPost!
+    updateForumPost(postId: ID!, body: String!, imageUrl: String): ForumPost!
   }
 `;
 
@@ -356,13 +357,13 @@ const resolvers = {
       const user = requireAuth(currentUser);
       return repo.createForumTopic({ ...input, authorUserId: user.id });
     },
-    createForumPost: async (_, { topicId, body, parentPostId }, { currentUser, repo }) => {
+    createForumPost: async (_, { topicId, body, parentPostId, imageUrl }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
-      return repo.createForumPost({ topicId, body, parentPostId, authorUserId: user.id });
+      return repo.createForumPost({ topicId, body, parentPostId, imageUrl, authorUserId: user.id });
     },
-    updateForumPost: async (_, { postId, body }, { currentUser, repo }) => {
+    updateForumPost: async (_, { postId, body, imageUrl }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
-      return repo.updateForumPost({ postId, body, authorUserId: user.id });
+      return repo.updateForumPost({ postId, body, imageUrl, authorUserId: user.id });
     },
   },
   User: {
