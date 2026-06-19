@@ -517,7 +517,7 @@ export function createHttpServer({ apolloServer, repo, jwtSecret, env = process.
         res.end();
         return;
       }
-
+      console.log(req.url, req.headers.host )
       const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
       const { pathname, searchParams } = url;
 
