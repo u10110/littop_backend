@@ -396,6 +396,7 @@ async function handleRadioUploadRequest({ req, res, pathname, repo, jwtSecret, e
 async function handleProfileImageUploadRequest({ req, res, pathname, repo, jwtSecret, env }) {
   
   if (pathname !== PROFILE_IMAGE_UPLOAD_ENDPOINT) {
+    console.log(pathname, PROFILE_IMAGE_UPLOAD_ENDPOINT)
     return false;
   }
 
