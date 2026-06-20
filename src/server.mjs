@@ -6,7 +6,6 @@ import { createHttpServer } from './httpServer.mjs';
 import { createPostgresRepository } from './postgresRepository.mjs';
 
 const PORT = Number(process.env.PORT || 4000);
-const HOST = process.env.HOST || 'localhost';
 const DATABASE_URL = process.env.DATABASE_URL || '';
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me';
 
@@ -27,5 +26,5 @@ const httpServer = createHttpServer({
   env: process.env,
 });
 
-await new Promise((resolve) => httpServer.listen(PORT, HOST, resolve));
-console.log(`Littop backend ready at http://${HOST}:${PORT}`);
+await new Promise((resolve) => httpServer.listen(PORT, '0.0.0.0', resolve));
+console.log(`Littop backend ready at http://0.0.0.0:${PORT}`);

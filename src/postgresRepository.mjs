@@ -7,6 +7,18 @@ function slugify(value) {
     .replace(/-{2,}/g, '-') || `item-${Date.now()}`;
 }
 
+const ONLINE_WINDOW_MS = 5 * 60 * 1000;
+
+function toIsoDate(value) {
+  return value?.toISOString?.() ?? value ?? null;
+}
+
+function isRecentlyOnline(value) {
+  const timestamp = Date.parse(String(value ?? ''));
+  if (!Number.isFinite(timestamp)) return false;
+  return Date.now() - timestamp <= ONLINE_WINDOW_MS;
+}
+
 function userFromRow(row) {
   if (!row) return null;
   return {
@@ -16,10 +28,12 @@ function userFromRow(row) {
     role: row.role,
     status: row.status,
     passwordHash: row.password_hash,
-    registeredAt: row.registered_at?.toISOString?.() ?? row.registered_at,
-    lastLoginAt: row.last_login_at?.toISOString?.() ?? row.last_login_at,
-    createdAt: row.created_at?.toISOString?.() ?? row.created_at,
-    updatedAt: row.updated_at?.toISOString?.() ?? row.updated_at,
+    registeredAt: toIsoDate(row.registered_at),
+    lastLoginAt: toIsoDate(row.last_login_at),
+    lastSeenAt: toIsoDate(row.last_seen_at),
+    isOnline: isRecentlyOnline(row.last_seen_at),
+    createdAt: toIsoDate(row.created_at),
+    updatedAt: toIsoDate(row.updated_at),
     profile: row.display_name == null ? null : {
       displayName: row.display_name,
       bio: row.bio,
@@ -51,9 +65,11 @@ function authorFromRow(row) {
     worksCountCached: Number(row.works_count_cached ?? 0),
     isClassic: Boolean(row.is_classic),
     isFeatured: Boolean(row.is_featured),
-    registeredAt: row.registered_at?.toISOString?.() ?? row.registered_at,
-    createdAt: row.created_at?.toISOString?.() ?? row.created_at,
-    updatedAt: row.updated_at?.toISOString?.() ?? row.updated_at,
+    registeredAt: toIsoDate(row.registered_at),
+    lastSeenAt: toIsoDate(row.last_seen_at),
+    isOnline: isRecentlyOnline(row.last_seen_at),
+    createdAt: toIsoDate(row.created_at),
+    updatedAt: toIsoDate(row.updated_at),
   };
 }
 
@@ -106,6 +122,7 @@ function workCommentFromRow(row) {
     userId: row.user_id,
     parentCommentId: row.parent_comment_id,
     body: row.body,
+    imageUrl: row.image_url,
     status: row.status,
     createdAt: row.created_at?.toISOString?.() ?? row.created_at,
     updatedAt: row.updated_at?.toISOString?.() ?? row.updated_at,
@@ -248,6 +265,36 @@ function radioTrackFromRow(row) {
     updatedAt: row.updated_at?.toISOString?.() ?? row.updated_at,
     averageRating: row.average_rating == null ? 0 : Number(row.average_rating),
     ratingsCount: row.ratings_count == null ? 0 : Number(row.ratings_count),
+  };
+}
+
+function workViewerFromRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    workId: row.work_id,
+    viewerUserId: row.viewer_user_id,
+    viewedAt: toIsoDate(row.viewed_at),
+    viewer: row.viewer_login ? {
+      id: row.viewer_id ?? row.viewer_user_id,
+      email: row.viewer_email,
+      login: row.viewer_login,
+      displayName: row.viewer_display_name,
+      bio: row.viewer_bio,
+      avatarUrl: row.viewer_avatar_url,
+      coverImageUrl: row.viewer_cover_image_url,
+      city: row.viewer_city,
+      websiteUrl: row.viewer_website_url,
+      ratingTotal: Number(row.viewer_rating_total ?? 0),
+      worksCountCached: Number(row.viewer_works_count_cached ?? 0),
+      isClassic: Boolean(row.viewer_is_classic),
+      isFeatured: Boolean(row.viewer_is_featured),
+      registeredAt: toIsoDate(row.viewer_registered_at),
+      lastSeenAt: toIsoDate(row.viewer_last_seen_at),
+      isOnline: isRecentlyOnline(row.viewer_last_seen_at),
+      createdAt: toIsoDate(row.viewer_created_at),
+      updatedAt: toIsoDate(row.viewer_updated_at),
+    } : null,
   };
 }
 
@@ -577,10 +624,24 @@ export function createPostgresRepository(pool) {
       return this.getUserById(userId);
     },
 
+    async touchUserPresence(userId) {
+      if (!userId) return null;
+      await pool.query(
+        `
+        update users
+        set last_seen_at = now()
+        where id = $1
+        `,
+        [userId],
+      );
+      return this.getUserById(userId);
+    },
+
+
     async getAuthorByUserId(userId) {
       const { rows } = await pool.query(
         `
-        select u.id, u.email, u.login, u.registered_at, u.created_at, u.updated_at,
+        select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
                ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         join author_profiles ap on ap.user_id = u.id
@@ -606,7 +667,7 @@ export function createPostgresRepository(pool) {
       const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
       const { rows } = await pool.query(
         `
-        select u.id, u.email, u.login, u.registered_at, u.created_at, u.updated_at,
+        select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
                ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         join author_profiles ap on ap.user_id = u.id
@@ -619,12 +680,31 @@ export function createPostgresRepository(pool) {
       return rows.map(authorFromRow);
     },
 
+    async listOnlineAuthors({ limit = 12 } = {}) {
+      const page = buildLimitOffset(limit, 0);
+      const { rows } = await pool.query(
+        `
+        select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+        from users u
+        join author_profiles ap on ap.user_id = u.id
+        where u.last_seen_at is not null
+          and u.last_seen_at >= now() - interval '5 minutes'
+        order by u.last_seen_at desc, u.registered_at desc
+        limit $1
+        `,
+        [page.limit],
+      );
+      return rows.map(authorFromRow);
+    },
+
+
     async getAuthor({ id = null, login = null } = {}) {
       const field = id != null ? 'u.id = $1' : 'u.login = $1';
       const value = id != null ? id : login;
       const { rows } = await pool.query(
         `
-        select u.id, u.email, u.login, u.registered_at, u.created_at, u.updated_at,
+        select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
                ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         join author_profiles ap on ap.user_id = u.id
@@ -635,6 +715,44 @@ export function createPostgresRepository(pool) {
       );
       return authorFromRow(rows[0]);
     },
+
+    async registerWorkView({ workId, viewerUserId }) {
+      if (!workId || !viewerUserId) return null;
+      await pool.query(
+        `
+        insert into work_views (work_id, viewer_user_id, viewed_at)
+        values ($1, $2, now())
+        on conflict (work_id, viewer_user_id)
+        do update set viewed_at = excluded.viewed_at
+        `,
+        [workId, viewerUserId],
+      );
+      return true;
+    },
+
+    async listWorkViewers({ workId, limit = 100 }) {
+      const page = buildLimitOffset(limit, 0);
+      const { rows } = await pool.query(
+        `
+        select wv.*,
+               u.id as viewer_id, u.email as viewer_email, u.login as viewer_login, u.registered_at as viewer_registered_at,
+               u.last_seen_at as viewer_last_seen_at, u.created_at as viewer_created_at, u.updated_at as viewer_updated_at,
+               ap.display_name as viewer_display_name, ap.bio as viewer_bio, ap.avatar_url as viewer_avatar_url,
+               ap.cover_image_url as viewer_cover_image_url, ap.city as viewer_city, ap.website_url as viewer_website_url,
+               ap.rating_total as viewer_rating_total, ap.works_count_cached as viewer_works_count_cached,
+               ap.is_classic as viewer_is_classic, ap.is_featured as viewer_is_featured
+        from work_views wv
+        left join users u on u.id = wv.viewer_user_id
+        left join author_profiles ap on ap.user_id = u.id
+        where wv.work_id = $1
+        order by wv.viewed_at desc, wv.id desc
+        limit $2
+        `,
+        [workId, page.limit],
+      );
+      return rows.map(workViewerFromRow);
+    },
+
 
     async listWorks({ limit = 20, offset = 0, sectionCode = null, genreSlug = null, authorId = null, search = null, status = 'published' } = {}) {
       const page = buildLimitOffset(limit, offset);
@@ -909,17 +1027,31 @@ export function createPostgresRepository(pool) {
       }
     },
 
-    async addWorkComment({ workId, userId, body, parentCommentId = null }) {
+    async addWorkComment({ workId, userId, body, parentCommentId = null, imageUrl = null }) {
       const client = await pool.connect();
       try {
         await client.query('begin');
+        if (parentCommentId != null) {
+          const parent = await client.query(
+            `
+            select id
+            from work_comments
+            where id = $1 and work_id = $2
+            limit 1
+            `,
+            [parentCommentId, workId],
+          );
+          if (!parent.rows[0]) {
+            throw new Error('Parent comment not found in this work');
+          }
+        }
         const inserted = await client.query(
           `
-          insert into work_comments (work_id, user_id, parent_comment_id, body)
-          values ($1, $2, $3, $4)
+          insert into work_comments (work_id, user_id, parent_comment_id, body, image_url)
+          values ($1, $2, $3, $4, $5)
           returning *
           `,
-          [workId, userId, parentCommentId, body],
+          [workId, userId, parentCommentId, body, normalizeOptionalText(imageUrl)],
         );
         await client.query('update works set comments_count = comments_count + 1 where id = $1', [workId]);
         await client.query('commit');

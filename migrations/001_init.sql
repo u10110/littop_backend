@@ -107,6 +107,7 @@ CREATE TABLE users (
     status              user_status NOT NULL DEFAULT 'active',
     registered_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_login_at       TIMESTAMPTZ,
+    last_seen_at        TIMESTAMPTZ,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT users_email_unique UNIQUE (email),
@@ -253,11 +254,24 @@ CREATE TABLE work_comments (
     user_id             BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     parent_comment_id   BIGINT REFERENCES work_comments(id) ON DELETE CASCADE,
     body                TEXT NOT NULL,
+    image_url           TEXT,
     status              moderation_status NOT NULL DEFAULT 'visible',
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT work_comments_body_not_blank CHECK (btrim(body) <> '')
 );
+
+CREATE TABLE work_views (
+    id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    work_id             BIGINT NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+    viewer_user_id      BIGINT REFERENCES users(id) ON DELETE CASCADE,
+    viewed_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX work_views_work_user_unique
+    ON work_views(work_id, viewer_user_id)
+    WHERE viewer_user_id IS NOT NULL;
 
 CREATE TABLE forum_sections (
     id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -318,6 +332,7 @@ CREATE TABLE forum_posts (
     author_user_id      BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     parent_post_id      BIGINT REFERENCES forum_posts(id) ON DELETE CASCADE,
     body                TEXT NOT NULL,
+    image_url           TEXT,
     status              moderation_status NOT NULL DEFAULT 'visible',
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),

@@ -22,8 +22,8 @@ const AUDIO_PUBLIC_PATH_PREFIX = '/media/audio/';
 const AUDIO_FILE_SIZE_LIMIT_BYTES = 20 * 1024 * 1024;
 const PROFILE_IMAGE_UPLOAD_ENDPOINT = '/api/profile/upload-image';
 const PROFILE_PUBLIC_PATH_PREFIX = '/media/profile/';
-const FORUM_IMAGE_UPLOAD_ENDPOINT = '/api/forum/upload-image';
-const FORUM_PUBLIC_PATH_PREFIX = '/media/forum/';
+const DISCUSSION_IMAGE_UPLOAD_ENDPOINT = '/api/forum/upload-image';
+const DISCUSSION_PUBLIC_PATH_PREFIX = '/media/forum/';
 const IMAGE_FILE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
 const AUDIO_EXTENSION_BY_MIME = {
   'audio/mpeg': '.mp3',
@@ -127,8 +127,8 @@ function resolveProfileStorageDir(env) {
   return configured ? resolve(configured) : resolve(process.cwd(), 'uploads', 'profile');
 }
 
-function resolveForumStorageDir(env) {
-  const configured = String(env.FORUM_UPLOAD_DIR || '').trim();
+function resolveDiscussionStorageDir(env) {
+  const configured = String(env.DISCUSSION_UPLOAD_DIR || '').trim();
   return configured ? resolve(configured) : resolve(process.cwd(), 'uploads', 'forum');
 }
 
@@ -400,6 +400,52 @@ async function handleRadioUploadRequest({ req, res, pathname, repo, jwtSecret, e
   return true;
 }
 
+async function handleDiscussionImageUploadRequest({ req, res, pathname, repo, jwtSecret, env }) {
+  if (pathname !== DISCUSSION_IMAGE_UPLOAD_ENDPOINT) {
+    return false;
+  }
+
+  if (req.method !== 'POST') {
+    sendText(res, 405, 'Method not allowed');
+    return true;
+  }
+
+  const context = await buildContext({ req }, { repo, jwtSecret });
+  if (!context.currentUser) {
+    sendJson(res, 401, { error: 'Authentication required' });
+    return true;
+  }
+
+  const body = await readJsonBody(req);
+
+  try {
+    const fileBuffer = decodeBase64Image(body?.contentBase64);
+    const fileExtension = detectImageExtension({
+      mimeType: body?.mimeType,
+      fileName: body?.fileName,
+    });
+    const storageDir = resolveDiscussionStorageDir(env);
+    await mkdir(storageDir, { recursive: true });
+
+    const storedFileName = `discussion-${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
+    const storagePath = join(storageDir, storedFileName);
+    await writeFile(storagePath, fileBuffer);
+
+    const imageUrl = `${resolvePublicBaseUrl(req, env)}${DISCUSSION_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    sendJson(res, 201, {
+      ok: true,
+      storedFileName,
+      imageUrl,
+    });
+  } catch (error) {
+    sendJson(res, 400, {
+      error: error instanceof Error ? error.message : 'Не удалось загрузить изображение.',
+    });
+  }
+
+  return true;
+}
+
 async function handleProfileImageUploadRequest({ req, res, pathname, repo, jwtSecret, env }) {
   if (pathname !== PROFILE_IMAGE_UPLOAD_ENDPOINT) {
     return false;
@@ -448,52 +494,6 @@ async function handleProfileImageUploadRequest({ req, res, pathname, repo, jwtSe
   return true;
 }
 
-async function handleForumImageUploadRequest({ req, res, pathname, repo, jwtSecret, env }) {
-  if (pathname !== FORUM_IMAGE_UPLOAD_ENDPOINT) {
-    return false;
-  }
-
-  if (req.method !== 'POST') {
-    sendText(res, 405, 'Method not allowed');
-    return true;
-  }
-
-  const context = await buildContext({ req }, { repo, jwtSecret });
-  if (!context.currentUser) {
-    sendJson(res, 401, { error: 'Authentication required' });
-    return true;
-  }
-
-  const body = await readJsonBody(req);
-
-  try {
-    const fileBuffer = decodeBase64Image(body?.contentBase64);
-    const fileExtension = detectImageExtension({
-      mimeType: body?.mimeType,
-      fileName: body?.fileName,
-    });
-    const storageDir = resolveForumStorageDir(env);
-    await mkdir(storageDir, { recursive: true });
-
-    const storedFileName = `forum-${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
-    const storagePath = join(storageDir, storedFileName);
-    await writeFile(storagePath, fileBuffer);
-
-    const imageUrl = `${resolvePublicBaseUrl(req, env)}${FORUM_PUBLIC_PATH_PREFIX}${storedFileName}`;
-    sendJson(res, 201, {
-      ok: true,
-      storedFileName,
-      imageUrl,
-    });
-  } catch (error) {
-    sendJson(res, 400, {
-      error: error instanceof Error ? error.message : 'Не удалось загрузить изображение сообщения.',
-    });
-  }
-
-  return true;
-}
-
 async function handleAudioFileRequest({ req, res, pathname, env }) {
   if (!pathname.startsWith(AUDIO_PUBLIC_PATH_PREFIX)) {
     return false;
@@ -520,6 +520,37 @@ async function handleAudioFileRequest({ req, res, pathname, env }) {
     createReadStream(storagePath).pipe(res);
   } catch {
     sendJson(res, 404, { error: 'Audio file not found' });
+  }
+
+  return true;
+}
+
+async function handleDiscussionImageFileRequest({ req, res, pathname, env }) {
+  if (!pathname.startsWith(DISCUSSION_PUBLIC_PATH_PREFIX)) {
+    return false;
+  }
+
+  if (req.method !== 'GET') {
+    sendText(res, 405, 'Method not allowed');
+    return true;
+  }
+
+  const requestedFileName = decodeURIComponent(pathname.slice(DISCUSSION_PUBLIC_PATH_PREFIX.length));
+  if (!requestedFileName || requestedFileName.includes('/') || requestedFileName.includes('..')) {
+    sendJson(res, 400, { error: 'Invalid file path' });
+    return true;
+  }
+
+  const storagePath = join(resolveDiscussionStorageDir(env), requestedFileName);
+
+  try {
+    const fileStat = await stat(storagePath);
+    res.statusCode = 200;
+    res.setHeader('content-type', IMAGE_CONTENT_TYPE_BY_EXTENSION[extname(requestedFileName).toLowerCase()] || 'application/octet-stream');
+    res.setHeader('content-length', String(fileStat.size));
+    createReadStream(storagePath).pipe(res);
+  } catch {
+    sendJson(res, 404, { error: 'Discussion image not found' });
   }
 
   return true;
@@ -556,37 +587,6 @@ async function handleProfileImageFileRequest({ req, res, pathname, env }) {
   return true;
 }
 
-async function handleForumImageFileRequest({ req, res, pathname, env }) {
-  if (!pathname.startsWith(FORUM_PUBLIC_PATH_PREFIX)) {
-    return false;
-  }
-
-  if (req.method !== 'GET') {
-    sendText(res, 405, 'Method not allowed');
-    return true;
-  }
-
-  const requestedFileName = decodeURIComponent(pathname.slice(FORUM_PUBLIC_PATH_PREFIX.length));
-  if (!requestedFileName || requestedFileName.includes('/') || requestedFileName.includes('..')) {
-    sendJson(res, 400, { error: 'Invalid file path' });
-    return true;
-  }
-
-  const storagePath = join(resolveForumStorageDir(env), requestedFileName);
-
-  try {
-    const fileStat = await stat(storagePath);
-    res.statusCode = 200;
-    res.setHeader('content-type', IMAGE_CONTENT_TYPE_BY_EXTENSION[extname(requestedFileName).toLowerCase()] || 'application/octet-stream');
-    res.setHeader('content-length', String(fileStat.size));
-    createReadStream(storagePath).pipe(res);
-  } catch {
-    sendJson(res, 404, { error: 'Forum image not found' });
-  }
-
-  return true;
-}
-
 export function createHttpServer({ apolloServer, repo, jwtSecret, env = process.env, fetchImpl = globalThis.fetch }) {
   apolloServer.assertStarted('createHttpServer');
 
@@ -602,6 +602,7 @@ export function createHttpServer({ apolloServer, repo, jwtSecret, env = process.
 
       const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
       const { pathname, searchParams } = url;
+
       if (await handleSocialAuthRequest({ req, res, pathname, searchParams, repo, jwtSecret, env, fetchImpl })) {
         return;
       }
@@ -614,7 +615,7 @@ export function createHttpServer({ apolloServer, repo, jwtSecret, env = process.
         return;
       }
 
-      if (await handleForumImageUploadRequest({ req, res, pathname, repo, jwtSecret, env })) {
+      if (await handleDiscussionImageUploadRequest({ req, res, pathname, repo, jwtSecret, env })) {
         return;
       }
 
@@ -622,15 +623,15 @@ export function createHttpServer({ apolloServer, repo, jwtSecret, env = process.
         return;
       }
 
+      if (await handleDiscussionImageFileRequest({ req, res, pathname, env })) {
+        return;
+      }
+
       if (await handleProfileImageFileRequest({ req, res, pathname, env })) {
         return;
       }
 
-      if (await handleForumImageFileRequest({ req, res, pathname, env })) {
-        return;
-      }
-
-      if (pathname === '/api' || pathname === '/graphql') {
+      if (pathname === '/' || pathname === '/graphql') {
         await handleGraphqlRequest({ req, res, apolloServer, repo, jwtSecret });
         return;
       }

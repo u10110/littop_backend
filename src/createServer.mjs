@@ -31,6 +31,8 @@ const typeDefs = `#graphql
     status: String!
     registeredAt: String!
     lastLoginAt: String
+    lastSeenAt: String
+    isOnline: Boolean!
     createdAt: String!
     updatedAt: String!
     profile: AuthorProfile
@@ -51,6 +53,8 @@ const typeDefs = `#graphql
     isClassic: Boolean!
     isFeatured: Boolean!
     registeredAt: String!
+    lastSeenAt: String
+    isOnline: Boolean!
     createdAt: String!
     updatedAt: String!
   }
@@ -90,6 +94,7 @@ const typeDefs = `#graphql
     userId: ID!
     parentCommentId: ID
     body: String!
+    imageUrl: String
     status: String!
     createdAt: String!
     updatedAt: String!
@@ -136,6 +141,14 @@ const typeDefs = `#graphql
     createdAt: String!
     updatedAt: String!
     author: Author
+  }
+
+  type WorkViewer {
+    id: ID!
+    workId: ID!
+    viewerUserId: ID
+    viewedAt: String!
+    viewer: Author
   }
 
   type Contest {
@@ -226,10 +239,12 @@ const typeDefs = `#graphql
     health: Health!
     me: User
     authors(limit: Int = 20, offset: Int = 0, search: String, classicsOnly: Boolean = false, featuredOnly: Boolean = false): [Author!]!
+    onlineAuthors(limit: Int = 12): [Author!]!
     author(id: ID, login: String): Author
     works(limit: Int = 20, offset: Int = 0, sectionCode: String, genreSlug: String, authorId: ID, search: String, status: String = "published"): [Work!]!
     work(id: ID, slug: String): Work
     workComments(workId: ID!, limit: Int = 50, offset: Int = 0): [WorkComment!]!
+    workViewers(workId: ID!, limit: Int = 100): [WorkViewer!]!
     forumSections: [ForumSection!]!
     forumTopics(sectionSlug: String, tag: String, limit: Int = 20, offset: Int = 0): [ForumTopic!]!
     forumTopic(id: ID, slug: String): ForumTopic
@@ -240,12 +255,13 @@ const typeDefs = `#graphql
   type Mutation {
     register(input: RegisterInput!): AuthPayload!
     login(input: LoginInput!): AuthPayload!
+    touchPresence: User!
     updateMyProfile(input: UpdateMyProfileInput!): User!
     createWork(input: CreateWorkInput!): Work!
     updateWork(workId: ID!, input: UpdateWorkInput!): Work!
     deleteWork(workId: ID!): Work!
     rateWork(workId: ID!, rating: Int!): WorkRating!
-    addWorkComment(workId: ID!, body: String!, parentCommentId: ID): WorkComment!
+    addWorkComment(workId: ID!, body: String!, parentCommentId: ID, imageUrl: String): WorkComment!
     createForumTopic(input: CreateForumTopicInput!): ForumTopic!
     createForumPost(topicId: ID!, body: String!, parentPostId: ID, imageUrl: String): ForumPost!
     updateForumPost(postId: ID!, body: String!, imageUrl: String): ForumPost!
@@ -266,6 +282,7 @@ const resolvers = {
     health: async (_, __, { repo }) => ({ status: 'ok', ok: true, database: await repo.ping() }),
     me: async (_, __, { currentUser, repo }) => currentUser ? repo.getUserById(currentUser.id) : null,
     authors: async (_, args, { repo }) => repo.listAuthors(args),
+    onlineAuthors: async (_, args, { repo }) => repo.listOnlineAuthors(args),
     author: async (_, args, { repo }) => repo.getAuthor(args),
     works: async (_, args, { repo }) => repo.listWorks(args),
     work: async (_, args, { repo, currentUser }) => {
@@ -283,9 +300,14 @@ const resolvers = {
         return null;
       }
 
+      if (currentUser?.id && String(currentUser.id) !== String(work.author?.id ?? work.authorUserId ?? '')) {
+        await repo.registerWorkView({ workId: work.id, viewerUserId: currentUser.id });
+      }
+
       return work;
     },
     workComments: async (_, args, { repo }) => repo.listWorkComments(args),
+    workViewers: async (_, args, { repo }) => repo.listWorkViewers(args),
     forumSections: async (_, __, { repo }) => repo.listForumSections(),
     forumTopics: async (_, args, { repo }) => repo.listForumTopics(args),
     forumTopic: async (_, args, { repo }) => repo.getForumTopic(args),
@@ -314,6 +336,10 @@ const resolvers = {
       }
       const token = issueToken(user, jwtSecret);
       return { token, user };
+    },
+    touchPresence: async (_, __, { currentUser, repo }) => {
+      const user = requireAuth(currentUser);
+      return repo.touchUserPresence(user.id);
     },
     updateMyProfile: async (_, { input }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
@@ -349,9 +375,9 @@ const resolvers = {
       const user = requireAuth(currentUser);
       return repo.upsertWorkRating({ workId, userId: user.id, rating });
     },
-    addWorkComment: async (_, { workId, body, parentCommentId }, { currentUser, repo }) => {
+    addWorkComment: async (_, { workId, body, parentCommentId, imageUrl }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
-      return repo.addWorkComment({ workId, userId: user.id, body, parentCommentId });
+      return repo.addWorkComment({ workId, userId: user.id, body, parentCommentId, imageUrl });
     },
     createForumTopic: async (_, { input }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
@@ -394,5 +420,8 @@ export function createApolloServer({ repo, jwtSecret }) {
 export async function buildContext({ req }, { repo, jwtSecret }) {
   const authHeader = req?.headers?.authorization ?? '';
   const currentUser = await getCurrentUserFromHeader(authHeader, jwtSecret, repo);
+  if (currentUser?.id && typeof repo.touchUserPresence === 'function') {
+    await repo.touchUserPresence(currentUser.id);
+  }
   return { repo, jwtSecret, authHeader, currentUser, decodeToken };
 }
