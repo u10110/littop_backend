@@ -864,6 +864,7 @@ export function createPostgresRepository(pool) {
         insert into work_views (work_id, viewer_user_id, viewed_at)
         values ($1, $2, now())
         on conflict (work_id, viewer_user_id)
+        where viewer_user_id is not null
         do update set viewed_at = excluded.viewed_at
         `,
         [workId, viewerUserId],
