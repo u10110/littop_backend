@@ -447,6 +447,8 @@ async function handleDiscussionImageUploadRequest({ req, res, pathname, repo, jw
 }
 
 async function handleProfileImageUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env }) {
+
+  console.log(pathname ,PROFILE_IMAGE_UPLOAD_ENDPOINT)
   if (pathname !== PROFILE_IMAGE_UPLOAD_ENDPOINT) {
     return false;
   }
