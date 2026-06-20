@@ -16,8 +16,7 @@ function toIsoDate(value) {
 function isRecentlyOnline(value) {
   const timestamp = Date.parse(String(value ?? ''));
   if (!Number.isFinite(timestamp)) return false;
-  console.log(Date.now() - timestamp <= ONLINE_WINDOW_MS)
-  return false;
+  return Date.now() - timestamp <= ONLINE_WINDOW_MS;
 }
 
 function userFromRow(row) {
@@ -109,6 +108,8 @@ function workFromRow(row) {
       isClassic: Boolean(row.author_is_classic),
       isFeatured: Boolean(row.author_is_featured),
       registeredAt: row.author_registered_at?.toISOString?.() ?? row.author_registered_at,
+      lastSeenAt: toIsoDate(row.author_last_seen_at),
+      isOnline: isRecentlyOnline(row.author_last_seen_at),
       createdAt: row.author_created_at?.toISOString?.() ?? row.author_created_at,
       updatedAt: row.author_updated_at?.toISOString?.() ?? row.author_updated_at,
     } : null,
@@ -142,6 +143,8 @@ function workCommentFromRow(row) {
       isClassic: Boolean(row.author_is_classic),
       isFeatured: Boolean(row.author_is_featured),
       registeredAt: row.author_registered_at?.toISOString?.() ?? row.author_registered_at,
+      lastSeenAt: toIsoDate(row.author_last_seen_at),
+      isOnline: isRecentlyOnline(row.author_last_seen_at),
       createdAt: row.author_created_at?.toISOString?.() ?? row.author_created_at,
       updatedAt: row.author_updated_at?.toISOString?.() ?? row.author_updated_at,
     } : null,
@@ -194,6 +197,8 @@ function forumTopicFromRow(row) {
       isClassic: Boolean(row.author_is_classic),
       isFeatured: Boolean(row.author_is_featured),
       registeredAt: row.author_registered_at?.toISOString?.() ?? row.author_registered_at,
+      lastSeenAt: toIsoDate(row.author_last_seen_at),
+      isOnline: isRecentlyOnline(row.author_last_seen_at),
       createdAt: row.author_created_at?.toISOString?.() ?? row.author_created_at,
       updatedAt: row.author_updated_at?.toISOString?.() ?? row.author_updated_at,
     } : null,
@@ -227,6 +232,8 @@ function forumPostFromRow(row) {
       isClassic: Boolean(row.author_is_classic),
       isFeatured: Boolean(row.author_is_featured),
       registeredAt: row.author_registered_at?.toISOString?.() ?? row.author_registered_at,
+      lastSeenAt: toIsoDate(row.author_last_seen_at),
+      isOnline: isRecentlyOnline(row.author_last_seen_at),
       createdAt: row.author_created_at?.toISOString?.() ?? row.author_created_at,
       updatedAt: row.author_updated_at?.toISOString?.() ?? row.author_updated_at,
     } : null,
@@ -373,7 +380,8 @@ export function createPostgresRepository(pool) {
         select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         left join author_profiles ap on ap.user_id = u.id
-        where u.email = $1 or u.login = $1
+        where (u.email = $1 or u.login = $1)
+          and u.status <> 'deleted'
         limit 1
         `,
         [identifier],
@@ -389,7 +397,7 @@ export function createPostgresRepository(pool) {
           `
           insert into users (email, login, password_hash)
           values ($1, $2, $3)
-          returning id
+          returning id, author_user_id
           `,
           [email, login, passwordHash],
         );
@@ -435,6 +443,7 @@ export function createPostgresRepository(pool) {
         from users u
         left join author_profiles ap on ap.user_id = u.id
         where u.email = $1
+          and u.status <> 'deleted'
         limit 1
         `,
         [normalizedEmail],
@@ -454,6 +463,7 @@ export function createPostgresRepository(pool) {
         join users u on u.id = sa.user_id
         left join author_profiles ap on ap.user_id = u.id
         where sa.provider = $1 and sa.provider_user_id = $2
+          and u.status <> 'deleted'
         limit 1
         `,
         [normalizedProvider, normalizedProviderUserId],
@@ -638,6 +648,134 @@ export function createPostgresRepository(pool) {
       return this.getUserById(userId);
     },
 
+    async closeUserAccount({ userId }) {
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        await client.query(
+          `
+          update works
+          set status = 'archived',
+              updated_at = now()
+          where author_user_id = $1
+            and status <> 'archived'
+          `,
+          [userId],
+        );
+        await client.query(
+          `
+          update forum_topics
+          set status = 'archived',
+              updated_at = now()
+          where author_user_id = $1
+            and status <> 'archived'
+          `,
+          [userId],
+        );
+        await client.query(
+          `
+          update forum_posts
+          set status = 'deleted',
+              updated_at = now()
+          where author_user_id = $1
+            and status <> 'deleted'
+          `,
+          [userId],
+        );
+        await client.query(
+          `
+          update work_comments
+          set status = 'deleted',
+              updated_at = now()
+          where user_id = $1
+            and status <> 'deleted'
+          `,
+          [userId],
+        );
+        const updated = await client.query(
+          `
+          update users
+          set status = 'deleted',
+              updated_at = now(),
+              last_seen_at = now()
+          where id = $1
+            and status <> 'deleted'
+          returning id
+          `,
+          [userId],
+        );
+        if (!updated.rows[0]) {
+          throw new Error('User account is already closed or missing');
+        }
+        await client.query(
+          `
+          update author_profiles
+          set works_count_cached = 0,
+              updated_at = now()
+          where user_id = $1
+          `,
+          [userId],
+        );
+        await client.query(
+          `
+          update works w
+          set comments_count = coalesce(stats.cnt, 0)
+          from (
+            select work_id, count(*)::int as cnt
+            from work_comments
+            where status = 'visible'
+            group by work_id
+          ) stats
+          where w.id = stats.work_id
+          `,
+        );
+        await client.query(
+          `
+          update works
+          set comments_count = 0
+          where id not in (
+            select distinct work_id
+            from work_comments
+            where status = 'visible'
+          )
+          `,
+        );
+        await client.query(
+          `
+          update forum_topics ft
+          set replies_count = coalesce(stats.cnt, 0),
+              last_post_at = coalesce(stats.last_post_at, ft.created_at)
+          from (
+            select topic_id, count(*)::int as cnt, max(created_at) as last_post_at
+            from forum_posts
+            where status = 'visible'
+            group by topic_id
+          ) stats
+          where ft.id = stats.topic_id
+          `,
+        );
+        await client.query(
+          `
+          update forum_topics
+          set replies_count = 0,
+              last_post_at = created_at
+          where id not in (
+            select distinct topic_id
+            from forum_posts
+            where status = 'visible'
+          )
+          `,
+        );
+        await client.query('commit');
+        return true;
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
 
     async getAuthorByUserId(userId) {
       const { rows } = await pool.query(
@@ -672,7 +810,7 @@ export function createPostgresRepository(pool) {
                ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         join author_profiles ap on ap.user_id = u.id
-        ${where}
+        ${where ? `${where} and u.status <> 'deleted'` : `where u.status <> 'deleted'`}
         order by ap.rating_total desc, u.registered_at desc
         limit $${params.length - 1} offset $${params.length}
         `,
@@ -689,7 +827,8 @@ export function createPostgresRepository(pool) {
                ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         join author_profiles ap on ap.user_id = u.id
-        where u.last_seen_at is not null
+        where u.status <> 'deleted'
+          and u.last_seen_at is not null
           and u.last_seen_at >= now() - interval '5 minutes'
         order by u.last_seen_at desc, u.registered_at desc
         limit $1
@@ -710,6 +849,7 @@ export function createPostgresRepository(pool) {
         from users u
         join author_profiles ap on ap.user_id = u.id
         where ${field}
+          and u.status <> 'deleted'
         limit 1
         `,
         [value],
@@ -784,7 +924,7 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select w.*, ws.code as section_code, wg.slug as genre_slug,
-               u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at,
+               u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
                ap.website_url as author_website_url, ap.rating_total as author_rating_total,
@@ -808,7 +948,7 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select w.*, ws.code as section_code, wg.slug as genre_slug,
-               u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at,
+               u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
                ap.website_url as author_website_url, ap.rating_total as author_rating_total,
@@ -831,7 +971,7 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select w.*, ws.code as section_code, wg.slug as genre_slug,
-               u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at,
+               u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
                ap.website_url as author_website_url, ap.rating_total as author_rating_total,
@@ -886,7 +1026,7 @@ export function createPostgresRepository(pool) {
       }
     },
 
-    async updateWork({ workId, authorUserId, sectionCode, genreSlug = null, title, summary = null, body = null, excerpt = null, status = 'published', projectFormat = null }) {
+    async updateWork({ workId, authorUserId, canManageAll = false, sectionCode, genreSlug = null, title, summary = null, body = null, excerpt = null, status = 'published', projectFormat = null }) {
       const normalizedTitle = String(title ?? '').trim();
       if (!normalizedTitle) {
         throw new Error('title is required');
@@ -908,7 +1048,7 @@ export function createPostgresRepository(pool) {
         if (!current) {
           throw new Error('Work not found');
         }
-        if (String(current.author_user_id) !== String(authorUserId)) {
+        if (!canManageAll && String(current.author_user_id) !== String(authorUserId)) {
           throw new Error('Only the owner can edit this work');
         }
 
@@ -936,9 +1076,9 @@ export function createPostgresRepository(pool) {
               project_format = $8,
               published_at = $9,
               updated_at = now()
-          where id = $10 and author_user_id = $11
+          where id = $10 and ($11::boolean = true or author_user_id = $12)
           `,
-          [section.rows[0].id, genreId, normalizedTitle, summary, body, excerpt, status, projectFormat, publishedAt, workId, authorUserId],
+          [section.rows[0].id, genreId, normalizedTitle, summary, body, excerpt, status, projectFormat, publishedAt, workId, canManageAll, authorUserId],
         );
         await client.query('commit');
         return await this.getWorkById(workId);
@@ -950,7 +1090,7 @@ export function createPostgresRepository(pool) {
       }
     },
 
-    async softDeleteWork({ workId, authorUserId }) {
+    async softDeleteWork({ workId, authorUserId, canManageAll = false }) {
       const client = await pool.connect();
       try {
         await client.query('begin');
@@ -959,17 +1099,17 @@ export function createPostgresRepository(pool) {
           update works
           set status = 'archived',
               updated_at = now()
-          where id = $1 and author_user_id = $2
-          returning id
+          where id = $1 and ($2::boolean = true or author_user_id = $3)
+          returning id, author_user_id
           `,
-          [workId, authorUserId],
+          [workId, canManageAll, authorUserId],
         );
         if (!updated.rows[0]) {
           throw new Error('Only the owner can delete this work');
         }
         await client.query(
           "update author_profiles set works_count_cached = (select count(*) from works where author_user_id = $1 and status <> 'archived') where user_id = $1",
-          [authorUserId],
+          [updated.rows[0].author_user_id],
         );
         await client.query('commit');
         return await this.getWorkById(workId);
@@ -1058,7 +1198,7 @@ export function createPostgresRepository(pool) {
         await client.query('commit');
         const comment = inserted.rows[0];
         const author = await this.getAuthorByUserId(userId);
-        return workCommentFromRow({ ...comment, author_login: author?.login, author_email: author?.email, author_display_name: author?.displayName, author_bio: author?.bio, author_avatar_url: author?.avatarUrl, author_cover_image_url: author?.coverImageUrl, author_city: author?.city, author_website_url: author?.websiteUrl, author_rating_total: author?.ratingTotal, author_works_count_cached: author?.worksCountCached, author_is_classic: author?.isClassic, author_is_featured: author?.isFeatured, author_registered_at: author?.registeredAt, author_created_at: author?.createdAt, author_updated_at: author?.updatedAt, author_id: author?.id });
+        return workCommentFromRow({ ...comment, author_login: author?.login, author_email: author?.email, author_display_name: author?.displayName, author_bio: author?.bio, author_avatar_url: author?.avatarUrl, author_cover_image_url: author?.coverImageUrl, author_city: author?.city, author_website_url: author?.websiteUrl, author_rating_total: author?.ratingTotal, author_works_count_cached: author?.worksCountCached, author_is_classic: author?.isClassic, author_is_featured: author?.isFeatured, author_registered_at: author?.registeredAt, author_last_seen_at: author?.lastSeenAt, author_created_at: author?.createdAt, author_updated_at: author?.updatedAt, author_id: author?.id });
       } catch (error) {
         await client.query('rollback');
         throw error;
@@ -1071,7 +1211,7 @@ export function createPostgresRepository(pool) {
       const page = buildLimitOffset(limit, offset);
       const { rows } = await pool.query(
         `
-        select wc.*, u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at,
+        select wc.*, u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
                ap.website_url as author_website_url, ap.rating_total as author_rating_total,
@@ -1081,6 +1221,7 @@ export function createPostgresRepository(pool) {
         join users u on u.id = wc.user_id
         left join author_profiles ap on ap.user_id = u.id
         where wc.work_id = $1
+          and wc.status = 'visible'
         order by wc.created_at asc
         limit $2 offset $3
         `,
@@ -1111,7 +1252,7 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select ft.*, fs.slug as section_slug,
-               u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at,
+               u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
                ap.website_url as author_website_url, ap.rating_total as author_rating_total,
@@ -1124,7 +1265,7 @@ export function createPostgresRepository(pool) {
         left join author_profiles ap on ap.user_id = u.id
         left join forum_topic_tags ftt on ftt.topic_id = ft.id
         left join forum_tags tg on tg.id = ftt.tag_id
-        ${where}
+        ${where ? `${where} and ft.status in ('open', 'closed')` : `where ft.status in ('open', 'closed')`}
         group by ft.id, fs.slug, u.id, ap.user_id
         order by ft.is_pinned desc, coalesce(ft.last_post_at, ft.created_at) desc
         limit $${params.length - 1} offset $${params.length}
@@ -1138,7 +1279,7 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select ft.*, fs.slug as section_slug,
-               u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at,
+               u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
                ap.website_url as author_website_url, ap.rating_total as author_rating_total,
@@ -1152,6 +1293,7 @@ export function createPostgresRepository(pool) {
         left join forum_topic_tags ftt on ftt.topic_id = ft.id
         left join forum_tags tg on tg.id = ftt.tag_id
         where ${id != null ? 'ft.id = $1' : 'ft.slug = $1'}
+          and ft.status in ('open', 'closed')
         group by ft.id, fs.slug, u.id, ap.user_id
         limit 1
         `,
@@ -1177,6 +1319,80 @@ export function createPostgresRepository(pool) {
         );
         await client.query('commit');
         return await this.getForumTopic({ id: inserted.rows[0].id });
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async updateForumTopic({ topicId, authorUserId, canManageAll = false, title, body }) {
+      const normalizedTitle = String(title ?? '').trim();
+      const normalizedBody = String(body ?? '').trim();
+      if (!normalizedTitle) throw new Error('title is required');
+      if (!normalizedBody) throw new Error('body is required');
+
+      const { rows } = await pool.query(
+        `
+        update forum_topics
+        set title = $1,
+            body = $2,
+            updated_at = now()
+        where id = $3
+          and ($4::boolean = true or author_user_id = $5)
+          and status in ('open', 'closed')
+        returning id
+        `,
+        [normalizedTitle, normalizedBody, topicId, canManageAll, authorUserId],
+      );
+      if (!rows[0]) {
+        throw new Error('Only the owner can edit this topic');
+      }
+      return await this.getForumTopic({ id: topicId });
+    },
+
+    async softDeleteForumTopic({ topicId, authorUserId, canManageAll = false }) {
+      const snapshot = await this.getForumTopic({ id: topicId });
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        const updated = await client.query(
+          `
+          update forum_topics
+          set status = 'archived',
+              updated_at = now()
+          where id = $1
+            and ($2::boolean = true or author_user_id = $3)
+            and status <> 'archived'
+          returning id
+          `,
+          [topicId, canManageAll, authorUserId],
+        );
+        if (!updated.rows[0]) {
+          throw new Error('Only the owner can delete this topic');
+        }
+        await client.query(
+          `
+          update forum_posts
+          set status = 'deleted',
+              updated_at = now()
+          where topic_id = $1
+            and status <> 'deleted'
+          `,
+          [topicId],
+        );
+        await client.query(
+          `
+          update forum_topics
+          set replies_count = 0,
+              last_post_at = created_at
+          where id = $1
+          `,
+          [topicId],
+        );
+        await client.query('commit');
+        return snapshot ? { ...snapshot, status: 'archived', repliesCount: 0 } : null;
       } catch (error) {
         await client.query('rollback');
         throw error;
@@ -1218,7 +1434,7 @@ export function createPostgresRepository(pool) {
         await client.query('commit');
         const post = inserted.rows[0];
         const author = await this.getAuthorByUserId(authorUserId);
-        return forumPostFromRow({ ...post, author_id: author?.id, author_email: author?.email, author_login: author?.login, author_display_name: author?.displayName, author_bio: author?.bio, author_avatar_url: author?.avatarUrl, author_cover_image_url: author?.coverImageUrl, author_city: author?.city, author_website_url: author?.websiteUrl, author_rating_total: author?.ratingTotal, author_works_count_cached: author?.worksCountCached, author_is_classic: author?.isClassic, author_is_featured: author?.isFeatured, author_registered_at: author?.registeredAt, author_created_at: author?.createdAt, author_updated_at: author?.updatedAt });
+        return forumPostFromRow({ ...post, author_id: author?.id, author_email: author?.email, author_login: author?.login, author_display_name: author?.displayName, author_bio: author?.bio, author_avatar_url: author?.avatarUrl, author_cover_image_url: author?.coverImageUrl, author_city: author?.city, author_website_url: author?.websiteUrl, author_rating_total: author?.ratingTotal, author_works_count_cached: author?.worksCountCached, author_is_classic: author?.isClassic, author_is_featured: author?.isFeatured, author_registered_at: author?.registeredAt, author_last_seen_at: author?.lastSeenAt, author_created_at: author?.createdAt, author_updated_at: author?.updatedAt });
       } catch (error) {
         await client.query('rollback');
         throw error;
@@ -1227,7 +1443,7 @@ export function createPostgresRepository(pool) {
       }
     },
 
-    async updateForumPost({ postId, authorUserId, body, imageUrl = null }) {
+    async updateForumPost({ postId, authorUserId, canManageAll = false, body, imageUrl = null }) {
       const normalizedBody = String(body ?? '').trim();
       if (!normalizedBody) {
         throw new Error('body is required');
@@ -1239,22 +1455,78 @@ export function createPostgresRepository(pool) {
         set body = $1,
             image_url = $2,
             updated_at = now()
-        where id = $3 and author_user_id = $4
+        where id = $3 and ($4::boolean = true or author_user_id = $5)
         returning *
         `,
-        [normalizedBody, normalizeOptionalText(imageUrl), postId, authorUserId],
+        [normalizedBody, normalizeOptionalText(imageUrl), postId, canManageAll, authorUserId],
       );
       if (!rows[0]) {
         throw new Error('Only the owner can edit this message');
       }
-      const author = await this.getAuthorByUserId(authorUserId);
-      return forumPostFromRow({ ...rows[0], author_id: author?.id, author_email: author?.email, author_login: author?.login, author_display_name: author?.displayName, author_bio: author?.bio, author_avatar_url: author?.avatarUrl, author_cover_image_url: author?.coverImageUrl, author_city: author?.city, author_website_url: author?.websiteUrl, author_rating_total: author?.ratingTotal, author_works_count_cached: author?.worksCountCached, author_is_classic: author?.isClassic, author_is_featured: author?.isFeatured, author_registered_at: author?.registeredAt, author_created_at: author?.createdAt, author_updated_at: author?.updatedAt });
+      const author = await this.getAuthorByUserId(rows[0].author_user_id);
+      return forumPostFromRow({ ...rows[0], author_id: author?.id, author_email: author?.email, author_login: author?.login, author_display_name: author?.displayName, author_bio: author?.bio, author_avatar_url: author?.avatarUrl, author_cover_image_url: author?.coverImageUrl, author_city: author?.city, author_website_url: author?.websiteUrl, author_rating_total: author?.ratingTotal, author_works_count_cached: author?.worksCountCached, author_is_classic: author?.isClassic, author_is_featured: author?.isFeatured, author_registered_at: author?.registeredAt, author_last_seen_at: author?.lastSeenAt, author_created_at: author?.createdAt, author_updated_at: author?.updatedAt });
+    },
+
+    async softDeleteForumPost({ postId, authorUserId, canManageAll = false }) {
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        const updated = await client.query(
+          `
+          update forum_posts
+          set status = 'deleted',
+              updated_at = now()
+          where id = $1
+            and ($2::boolean = true or author_user_id = $3)
+            and status <> 'deleted'
+          returning *
+          `,
+          [postId, canManageAll, authorUserId],
+        );
+        const row = updated.rows[0];
+        if (!row) {
+          throw new Error('Only the owner can delete this message');
+        }
+        await client.query(
+          `
+          update forum_topics ft
+          set replies_count = coalesce(stats.cnt, 0),
+              last_post_at = coalesce(stats.last_post_at, ft.created_at)
+          from (
+            select topic_id, count(*)::int as cnt, max(created_at) as last_post_at
+            from forum_posts
+            where topic_id = $1 and status = 'visible'
+            group by topic_id
+          ) stats
+          where ft.id = $1 and ft.id = stats.topic_id
+          `,
+          [row.topic_id],
+        );
+        await client.query(
+          `
+          update forum_topics
+          set replies_count = 0,
+              last_post_at = created_at
+          where id = $1
+            and not exists (select 1 from forum_posts where topic_id = $1 and status = 'visible')
+          `,
+          [row.topic_id],
+        );
+        await client.query('commit');
+        const author = await this.getAuthorByUserId(row.author_user_id);
+        return forumPostFromRow({ ...row, author_id: author?.id, author_email: author?.email, author_login: author?.login, author_display_name: author?.displayName, author_bio: author?.bio, author_avatar_url: author?.avatarUrl, author_cover_image_url: author?.coverImageUrl, author_city: author?.city, author_website_url: author?.websiteUrl, author_rating_total: author?.ratingTotal, author_works_count_cached: author?.worksCountCached, author_is_classic: author?.isClassic, author_is_featured: author?.isFeatured, author_registered_at: author?.registeredAt, author_last_seen_at: author?.lastSeenAt, author_created_at: author?.createdAt, author_updated_at: author?.updatedAt });
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
     },
 
     async listForumPosts(topicId) {
       const { rows } = await pool.query(
         `
-        select fp.*, u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at,
+        select fp.*, u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
                ap.website_url as author_website_url, ap.rating_total as author_rating_total,
@@ -1264,6 +1536,7 @@ export function createPostgresRepository(pool) {
         join users u on u.id = fp.author_user_id
         left join author_profiles ap on ap.user_id = u.id
         where fp.topic_id = $1
+          and fp.status = 'visible'
         order by fp.created_at asc
         `,
         [topicId],

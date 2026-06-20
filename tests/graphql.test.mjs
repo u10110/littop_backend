@@ -224,6 +224,60 @@ test('updateMyProfile saves current user profile fields', async () => {
   await server.stop();
 });
 
+test('embedded author falls back to lastSeenAt for non-nullable isOnline', async () => {
+  const repo = makeFakeRepo();
+  const bootstrapUser = await repo.createUser({
+    email: 'online-author@example.com',
+    login: 'online-author',
+    passwordHash: 'hash',
+    displayName: 'Онлайн автор'
+  });
+  const work = await repo.createWork({
+    authorUserId: bootstrapUser.id,
+    sectionCode: 'poetry',
+    title: 'Проверка online',
+    summary: 'summary',
+    body: 'body',
+    excerpt: 'excerpt',
+    status: 'published',
+    projectFormat: null,
+  });
+
+  work.author = {
+    id: bootstrapUser.id,
+    email: bootstrapUser.email,
+    login: bootstrapUser.login,
+    displayName: bootstrapUser.profile.displayName,
+    lastSeenAt: new Date().toISOString(),
+  };
+
+  const server = createApolloServer({ repo, jwtSecret: 'test-secret' });
+  await server.start();
+
+  const result = await server.executeOperation({
+    query: `query WorkAuthor($id: ID!) {
+      work(id: $id) {
+        id
+        author {
+          login
+          lastSeenAt
+          isOnline
+        }
+      }
+    }`,
+    variables: { id: String(work.id) },
+  }, {
+    contextValue: { repo, jwtSecret: 'test-secret', currentUser: null, authHeader: '' }
+  });
+
+  assert.equal(result.body.kind, 'single');
+  assert.equal(result.body.singleResult.errors, undefined);
+  assert.equal(result.body.singleResult.data.work.author.login, 'online-author');
+  assert.equal(result.body.singleResult.data.work.author.isOnline, true);
+
+  await server.stop();
+});
+
 test('createWork requires auth and returns created work for authenticated author', async () => {
   const repo = makeFakeRepo();
   const bootstrapUser = await repo.createUser({

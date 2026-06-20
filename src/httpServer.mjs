@@ -224,7 +224,7 @@ function normalizeProfileImageKind(value) {
   throw new Error('kind must be avatar or cover');
 }
 
-async function handleGraphqlRequest({ req, res, apolloServer, repo, jwtSecret }) {
+async function handleGraphqlRequest({ req, res, apolloServer, repo, jwtSecret, adminUserIds }) {
   const headers = new HeaderMap();
   for (const [key, value] of Object.entries(req.headers)) {
     if (value !== undefined) {
@@ -242,7 +242,7 @@ async function handleGraphqlRequest({ req, res, apolloServer, repo, jwtSecret })
 
   const response = await apolloServer.executeHTTPGraphQLRequest({
     httpGraphQLRequest,
-    context: () => buildContext({ req }, { repo, jwtSecret }),
+    context: () => buildContext({ req }, { repo, jwtSecret, adminUserIds }),
   });
 
   copyGraphqlResponse(res, response);
@@ -340,7 +340,7 @@ async function handleSocialAuthRequest({ req, res, pathname, searchParams, repo,
   return true;
 }
 
-async function handleRadioUploadRequest({ req, res, pathname, repo, jwtSecret, env }) {
+async function handleRadioUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env }) {
   if (pathname !== AUDIO_UPLOAD_ENDPOINT) {
     return false;
   }
@@ -350,7 +350,7 @@ async function handleRadioUploadRequest({ req, res, pathname, repo, jwtSecret, e
     return true;
   }
 
-  const context = await buildContext({ req }, { repo, jwtSecret });
+  const context = await buildContext({ req }, { repo, jwtSecret, adminUserIds });
   if (!context.currentUser) {
     sendJson(res, 401, { error: 'Authentication required' });
     return true;
@@ -400,7 +400,7 @@ async function handleRadioUploadRequest({ req, res, pathname, repo, jwtSecret, e
   return true;
 }
 
-async function handleDiscussionImageUploadRequest({ req, res, pathname, repo, jwtSecret, env }) {
+async function handleDiscussionImageUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env }) {
   if (pathname !== DISCUSSION_IMAGE_UPLOAD_ENDPOINT) {
     return false;
   }
@@ -410,7 +410,7 @@ async function handleDiscussionImageUploadRequest({ req, res, pathname, repo, jw
     return true;
   }
 
-  const context = await buildContext({ req }, { repo, jwtSecret });
+  const context = await buildContext({ req }, { repo, jwtSecret, adminUserIds });
   if (!context.currentUser) {
     sendJson(res, 401, { error: 'Authentication required' });
     return true;
@@ -446,7 +446,7 @@ async function handleDiscussionImageUploadRequest({ req, res, pathname, repo, jw
   return true;
 }
 
-async function handleProfileImageUploadRequest({ req, res, pathname, repo, jwtSecret, env }) {
+async function handleProfileImageUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env }) {
   if (pathname !== PROFILE_IMAGE_UPLOAD_ENDPOINT) {
     return false;
   }
@@ -456,7 +456,7 @@ async function handleProfileImageUploadRequest({ req, res, pathname, repo, jwtSe
     return true;
   }
 
-  const context = await buildContext({ req }, { repo, jwtSecret });
+  const context = await buildContext({ req }, { repo, jwtSecret, adminUserIds });
   if (!context.currentUser) {
     sendJson(res, 401, { error: 'Authentication required' });
     return true;
@@ -587,7 +587,7 @@ async function handleProfileImageFileRequest({ req, res, pathname, env }) {
   return true;
 }
 
-export function createHttpServer({ apolloServer, repo, jwtSecret, env = process.env, fetchImpl = globalThis.fetch }) {
+export function createHttpServer({ apolloServer, repo, jwtSecret, adminUserIds = new Set(), env = process.env, fetchImpl = globalThis.fetch }) {
   apolloServer.assertStarted('createHttpServer');
 
   return createNodeHttpServer(async (req, res) => {
@@ -607,15 +607,15 @@ export function createHttpServer({ apolloServer, repo, jwtSecret, env = process.
         return;
       }
 
-      if (await handleRadioUploadRequest({ req, res, pathname, repo, jwtSecret, env })) {
+      if (await handleRadioUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env })) {
         return;
       }
 
-      if (await handleProfileImageUploadRequest({ req, res, pathname, repo, jwtSecret, env })) {
+      if (await handleProfileImageUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env })) {
         return;
       }
 
-      if (await handleDiscussionImageUploadRequest({ req, res, pathname, repo, jwtSecret, env })) {
+      if (await handleDiscussionImageUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env })) {
         return;
       }
 
@@ -631,8 +631,8 @@ export function createHttpServer({ apolloServer, repo, jwtSecret, env = process.
         return;
       }
 
-      if (pathname === '/api' || pathname === '/graphql') {
-        await handleGraphqlRequest({ req, res, apolloServer, repo, jwtSecret });
+      if (pathname === '/' || pathname === '/graphql') {
+        await handleGraphqlRequest({ req, res, apolloServer, repo, jwtSecret, adminUserIds });
         return;
       }
 

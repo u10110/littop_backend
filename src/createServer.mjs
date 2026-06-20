@@ -235,6 +235,11 @@ const typeDefs = `#graphql
     websiteUrl: String
   }
 
+  input UpdateForumTopicInput {
+    title: String!
+    body: String!
+  }
+
   type Query {
     health: Health!
     me: User
@@ -257,14 +262,18 @@ const typeDefs = `#graphql
     login(input: LoginInput!): AuthPayload!
     touchPresence: User!
     updateMyProfile(input: UpdateMyProfileInput!): User!
+    closeMyAccount: Boolean!
     createWork(input: CreateWorkInput!): Work!
     updateWork(workId: ID!, input: UpdateWorkInput!): Work!
     deleteWork(workId: ID!): Work!
     rateWork(workId: ID!, rating: Int!): WorkRating!
     addWorkComment(workId: ID!, body: String!, parentCommentId: ID, imageUrl: String): WorkComment!
     createForumTopic(input: CreateForumTopicInput!): ForumTopic!
+    updateForumTopic(topicId: ID!, input: UpdateForumTopicInput!): ForumTopic!
+    deleteForumTopic(topicId: ID!): ForumTopic!
     createForumPost(topicId: ID!, body: String!, parentPostId: ID, imageUrl: String): ForumPost!
     updateForumPost(postId: ID!, body: String!, imageUrl: String): ForumPost!
+    deleteForumPost(postId: ID!): ForumPost!
   }
 `;
 
@@ -277,10 +286,36 @@ function requireAuth(currentUser) {
   return currentUser;
 }
 
+function isAdminUser(user, adminUserIds) {
+  return Boolean(user?.id) && adminUserIds?.has(String(user.id));
+}
+
+function applyAdminAccess(user, adminUserIds) {
+  if (!user) return null;
+  if (!isAdminUser(user, adminUserIds)) return user;
+  return {
+    ...user,
+    role: 'admin',
+  };
+}
+
+const ONLINE_WINDOW_MS = 5 * 60 * 1000;
+
+function resolveOnlineFlag(entity) {
+  if (typeof entity?.isOnline === 'boolean') {
+    return entity.isOnline;
+  }
+  const timestamp = Date.parse(String(entity?.lastSeenAt ?? ''));
+  if (!Number.isFinite(timestamp)) {
+    return false;
+  }
+  return Date.now() - timestamp <= ONLINE_WINDOW_MS;
+}
+
 const resolvers = {
   Query: {
     health: async (_, __, { repo }) => ({ status: 'ok', ok: true, database: await repo.ping() }),
-    me: async (_, __, { currentUser, repo }) => currentUser ? repo.getUserById(currentUser.id) : null,
+    me: async (_, __, { currentUser }) => currentUser ?? null,
     authors: async (_, args, { repo }) => repo.listAuthors(args),
     onlineAuthors: async (_, args, { repo }) => repo.listOnlineAuthors(args),
     author: async (_, args, { repo }) => repo.getAuthor(args),
@@ -337,9 +372,9 @@ const resolvers = {
       const token = issueToken(user, jwtSecret);
       return { token, user };
     },
-    touchPresence: async (_, __, { currentUser, repo }) => {
+    touchPresence: async (_, __, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
-      return repo.touchUserPresence(user.id);
+      return applyAdminAccess(await repo.touchUserPresence(user.id), adminUserIds);
     },
     updateMyProfile: async (_, { input }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
@@ -359,17 +394,21 @@ const resolvers = {
         websiteUrl: input.websiteUrl,
       });
     },
+    closeMyAccount: async (_, __, { currentUser, repo }) => {
+      const user = requireAuth(currentUser);
+      return repo.closeUserAccount({ userId: user.id });
+    },
     createWork: async (_, { input }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
       return repo.createWork({ ...input, authorUserId: user.id });
     },
-    updateWork: async (_, { workId, input }, { currentUser, repo }) => {
+    updateWork: async (_, { workId, input }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
-      return repo.updateWork({ workId, authorUserId: user.id, ...input });
+      return repo.updateWork({ workId, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds), ...input });
     },
-    deleteWork: async (_, { workId }, { currentUser, repo }) => {
+    deleteWork: async (_, { workId }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
-      return repo.softDeleteWork({ workId, authorUserId: user.id });
+      return repo.softDeleteWork({ workId, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds) });
     },
     rateWork: async (_, { workId, rating }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
@@ -383,16 +422,32 @@ const resolvers = {
       const user = requireAuth(currentUser);
       return repo.createForumTopic({ ...input, authorUserId: user.id });
     },
+    updateForumTopic: async (_, { topicId, input }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      return repo.updateForumTopic({ topicId, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds), ...input });
+    },
+    deleteForumTopic: async (_, { topicId }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      return repo.softDeleteForumTopic({ topicId, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds) });
+    },
     createForumPost: async (_, { topicId, body, parentPostId, imageUrl }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
       return repo.createForumPost({ topicId, body, parentPostId, imageUrl, authorUserId: user.id });
     },
-    updateForumPost: async (_, { postId, body, imageUrl }, { currentUser, repo }) => {
+    updateForumPost: async (_, { postId, body, imageUrl }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
-      return repo.updateForumPost({ postId, body, imageUrl, authorUserId: user.id });
+      return repo.updateForumPost({ postId, body, imageUrl, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds) });
+    },
+    deleteForumPost: async (_, { postId }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      return repo.softDeleteForumPost({ postId, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds) });
     },
   },
+  Author: {
+    isOnline: (parent) => resolveOnlineFlag(parent),
+  },
   User: {
+    isOnline: (parent) => resolveOnlineFlag(parent),
     profile: async (parent, _, { repo }) => parent.profile ?? repo.getUserById(parent.id).then((user) => user?.profile ?? null),
   },
   Work: {
@@ -410,18 +465,19 @@ const resolvers = {
   },
 };
 
-export function createApolloServer({ repo, jwtSecret }) {
+export function createApolloServer({ repo, jwtSecret, adminUserIds = new Set() }) {
   return new ApolloServer({
     typeDefs,
     resolvers,
+    introspection: true,
   });
 }
 
-export async function buildContext({ req }, { repo, jwtSecret }) {
+export async function buildContext({ req }, { repo, jwtSecret, adminUserIds = new Set() }) {
   const authHeader = req?.headers?.authorization ?? '';
-  const currentUser = await getCurrentUserFromHeader(authHeader, jwtSecret, repo);
+  const currentUser = applyAdminAccess(await getCurrentUserFromHeader(authHeader, jwtSecret, repo), adminUserIds);
   if (currentUser?.id && typeof repo.touchUserPresence === 'function') {
     await repo.touchUserPresence(currentUser.id);
   }
-  return { repo, jwtSecret, authHeader, currentUser, decodeToken };
+  return { repo, jwtSecret, authHeader, currentUser, adminUserIds, decodeToken };
 }
