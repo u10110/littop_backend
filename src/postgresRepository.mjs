@@ -16,7 +16,8 @@ function toIsoDate(value) {
 function isRecentlyOnline(value) {
   const timestamp = Date.parse(String(value ?? ''));
   if (!Number.isFinite(timestamp)) return false;
-  return Date.now() - timestamp <= ONLINE_WINDOW_MS;
+  console.log(Date.now() - timestamp <= ONLINE_WINDOW_MS)
+  return false;
 }
 
 function userFromRow(row) {
