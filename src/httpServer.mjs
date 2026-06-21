@@ -447,8 +447,6 @@ async function handleDiscussionImageUploadRequest({ req, res, pathname, repo, jw
 }
 
 async function handleProfileImageUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env }) {
-
-  console.log(pathname ,PROFILE_IMAGE_UPLOAD_ENDPOINT)
   if (pathname !== PROFILE_IMAGE_UPLOAD_ENDPOINT) {
     return false;
   }
@@ -633,7 +631,7 @@ export function createHttpServer({ apolloServer, repo, jwtSecret, adminUserIds =
         return;
       }
 
-      if (pathname === '/api' || pathname === '/graphql') {
+      if (pathname === '/' || pathname === '/graphql') {
         await handleGraphqlRequest({ req, res, apolloServer, repo, jwtSecret, adminUserIds });
         return;
       }

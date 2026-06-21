@@ -73,6 +73,8 @@ const typeDefs = `#graphql
     commentsCount: Int!
     ratingsCount: Int!
     averageRating: Float!
+    likesCount: Int!
+    likedByMe: Boolean!
     publishedAt: String
     createdAt: String!
     updatedAt: String!
@@ -96,9 +98,35 @@ const typeDefs = `#graphql
     body: String!
     imageUrl: String
     status: String!
+    likesCount: Int!
+    likedByMe: Boolean!
     createdAt: String!
     updatedAt: String!
     author: Author
+  }
+
+  type WorkReaderLedger {
+    totalViews: Int!
+    lockedViews: Int!
+    batchSize: Int!
+    viewers: [WorkViewer!]!
+  }
+
+  type PageVisitor {
+    id: ID!
+    workId: ID!
+    viewerUserId: ID
+    viewedAt: String!
+    workTitle: String
+    workSlug: String
+    viewer: Author
+  }
+
+  type PageVisitorLedger {
+    totalViews: Int!
+    lockedViews: Int!
+    batchSize: Int!
+    visitors: [PageVisitor!]!
   }
 
   type ForumSection {
@@ -236,6 +264,7 @@ const typeDefs = `#graphql
   }
 
   input UpdateForumTopicInput {
+    sectionSlug: String!
     title: String!
     body: String!
   }
@@ -250,6 +279,10 @@ const typeDefs = `#graphql
     work(id: ID, slug: String): Work
     workComments(workId: ID!, limit: Int = 50, offset: Int = 0): [WorkComment!]!
     workViewers(workId: ID!, limit: Int = 100): [WorkViewer!]!
+    workReaders(workId: ID!, limit: Int = 100): WorkReaderLedger!
+    authorPageVisitors(workId: ID!, limit: Int = 100): PageVisitorLedger!
+    workLikers(workId: ID!, limit: Int = 100): [Author!]!
+    workCommentLikers(commentId: ID!, limit: Int = 100): [Author!]!
     forumSections: [ForumSection!]!
     forumTopics(sectionSlug: String, tag: String, limit: Int = 20, offset: Int = 0): [ForumTopic!]!
     forumTopic(id: ID, slug: String): ForumTopic
@@ -266,8 +299,12 @@ const typeDefs = `#graphql
     createWork(input: CreateWorkInput!): Work!
     updateWork(workId: ID!, input: UpdateWorkInput!): Work!
     deleteWork(workId: ID!): Work!
+    toggleWorkLike(workId: ID!): Work!
     rateWork(workId: ID!, rating: Int!): WorkRating!
     addWorkComment(workId: ID!, body: String!, parentCommentId: ID, imageUrl: String): WorkComment!
+    updateWorkComment(commentId: ID!, body: String!, imageUrl: String): WorkComment!
+    deleteWorkComment(commentId: ID!): WorkComment!
+    toggleWorkCommentLike(commentId: ID!): WorkComment!
     createForumTopic(input: CreateForumTopicInput!): ForumTopic!
     updateForumTopic(topicId: ID!, input: UpdateForumTopicInput!): ForumTopic!
     deleteForumTopic(topicId: ID!): ForumTopic!
@@ -343,6 +380,10 @@ const resolvers = {
     },
     workComments: async (_, args, { repo }) => repo.listWorkComments(args),
     workViewers: async (_, args, { repo }) => repo.listWorkViewers(args),
+    workReaders: async (_, args, { repo }) => repo.listWorkReaders(args),
+    authorPageVisitors: async (_, args, { repo }) => repo.listAuthorPageVisitorsByWork(args),
+    workLikers: async (_, args, { repo }) => repo.listWorkLikers(args),
+    workCommentLikers: async (_, args, { repo }) => repo.listWorkCommentLikers(args),
     forumSections: async (_, __, { repo }) => repo.listForumSections(),
     forumTopics: async (_, args, { repo }) => repo.listForumTopics(args),
     forumTopic: async (_, args, { repo }) => repo.getForumTopic(args),
@@ -410,6 +451,10 @@ const resolvers = {
       const user = requireAuth(currentUser);
       return repo.softDeleteWork({ workId, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds) });
     },
+    toggleWorkLike: async (_, { workId }, { currentUser, repo }) => {
+      const user = requireAuth(currentUser);
+      return repo.toggleWorkLike({ workId, userId: user.id });
+    },
     rateWork: async (_, { workId, rating }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
       return repo.upsertWorkRating({ workId, userId: user.id, rating });
@@ -417,6 +462,18 @@ const resolvers = {
     addWorkComment: async (_, { workId, body, parentCommentId, imageUrl }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
       return repo.addWorkComment({ workId, userId: user.id, body, parentCommentId, imageUrl });
+    },
+    updateWorkComment: async (_, { commentId, body, imageUrl }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      return repo.updateWorkComment({ commentId, userId: user.id, canManageAll: isAdminUser(user, adminUserIds), body, imageUrl });
+    },
+    deleteWorkComment: async (_, { commentId }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      return repo.softDeleteWorkComment({ commentId, actorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds) });
+    },
+    toggleWorkCommentLike: async (_, { commentId }, { currentUser, repo }) => {
+      const user = requireAuth(currentUser);
+      return repo.toggleWorkCommentLike({ commentId, userId: user.id });
     },
     createForumTopic: async (_, { input }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
@@ -452,9 +509,17 @@ const resolvers = {
   },
   Work: {
     author: async (parent, _, { repo }) => parent.author ?? repo.getAuthorByUserId(parent.authorUserId),
+    likedByMe: async (parent, _, { repo, currentUser }) => {
+      if (!currentUser?.id) return false;
+      return repo.hasUserLikedWork({ workId: parent.id, userId: currentUser.id });
+    },
   },
   WorkComment: {
     author: async (parent, _, { repo }) => parent.author ?? repo.getAuthorByUserId(parent.userId),
+    likedByMe: async (parent, _, { repo, currentUser }) => {
+      if (!currentUser?.id) return false;
+      return repo.hasUserLikedWorkComment({ commentId: parent.id, userId: currentUser.id });
+    },
   },
   ForumTopic: {
     author: async (parent, _, { repo }) => parent.author ?? repo.getAuthorByUserId(parent.authorUserId),
