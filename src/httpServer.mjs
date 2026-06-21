@@ -631,7 +631,7 @@ export function createHttpServer({ apolloServer, repo, jwtSecret, adminUserIds =
         return;
       }
 
-      if (pathname === '/' || pathname === '/graphql') {
+      if (pathname === '/ap[' || pathname === '/graphql') {
         await handleGraphqlRequest({ req, res, apolloServer, repo, jwtSecret, adminUserIds });
         return;
       }
