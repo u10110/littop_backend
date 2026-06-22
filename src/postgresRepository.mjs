@@ -2241,3 +2241,96 @@ export function createPostgresRepository(pool) {
         where fp.topic_id = $1
           and fp.status = 'visible'
         order by fp.created_at asc
+        `,
+        [topicId],
+      );
+      return rows.map(forumPostFromRow);
+    },
+
+    async listContests({ status = null, scope = null, limit = 20, offset = 0 } = {}) {
+      const page = buildLimitOffset(limit, offset);
+      const conditions = [];
+      const params = [];
+      if (status) {
+        params.push(status);
+        conditions.push(`status = $${params.length}`);
+      }
+      if (scope) {
+        params.push(scope);
+        conditions.push(`contest_scope = $${params.length}`);
+      }
+      params.push(page.limit, page.offset);
+      const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
+      const { rows } = await pool.query(
+        `
+        select *
+        from contests
+        ${where}
+        order by starts_at desc nulls last, created_at desc
+        limit $${params.length - 1} offset $${params.length}
+        `,
+        params,
+      );
+      return rows.map(contestFromRow);
+    },
+
+    async createRadioTrack({ title, authorName = null, durationSeconds = null, audioUrl, sourceUrl = null, workId = null }) {
+      const normalizedTitle = String(title ?? '').trim();
+      if (!normalizedTitle) {
+        throw new Error('title is required');
+      }
+
+      const normalizedAudioUrl = normalizeOptionalText(audioUrl);
+      if (!normalizedAudioUrl) {
+        throw new Error('audioUrl is required');
+      }
+
+      const normalizedDuration = durationSeconds == null || durationSeconds === ''
+        ? null
+        : Math.max(0, Number.parseInt(durationSeconds, 10) || 0);
+
+      const { rows } = await pool.query(
+        `
+        insert into radio_tracks (
+          title,
+          author_name,
+          work_id,
+          duration_seconds,
+          audio_url,
+          source_url
+        )
+        values ($1, $2, $3, $4, $5, $6)
+        returning *
+        `,
+        [
+          normalizedTitle,
+          normalizeOptionalText(authorName),
+          workId || null,
+          normalizedDuration,
+          normalizedAudioUrl,
+          normalizeOptionalText(sourceUrl),
+        ],
+      );
+
+      return radioTrackFromRow(rows[0]);
+    },
+
+    async listRadioTracks({ limit = 20, offset = 0 } = {}) {
+      const page = buildLimitOffset(limit, offset);
+      const { rows } = await pool.query(
+        `
+        select rt.*,
+               coalesce(avg(rtr.rating), 0)::numeric(4,2) as average_rating,
+               count(rtr.id)::int as ratings_count
+        from radio_tracks rt
+        left join radio_track_ratings rtr on rtr.track_id = rt.id
+        group by rt.id
+        order by rt.created_at desc
+        limit $1 offset $2
+        `,
+        [page.limit, page.offset],
+      );
+      return rows.map(radioTrackFromRow);
+    },
+  };
+}
