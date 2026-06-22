@@ -89,6 +89,8 @@ function workFromRow(row) {
     commentsCount: Number(row.comments_count ?? 0),
     ratingsCount: Number(row.ratings_count ?? 0),
     averageRating: Number(row.average_rating ?? 0),
+    likesCount: Number(row.likes_count ?? 0),
+    announcementActive: Boolean(row.announcement_active),
     publishedAt: row.published_at?.toISOString?.() ?? row.published_at,
     createdAt: row.created_at?.toISOString?.() ?? row.created_at,
     updatedAt: row.updated_at?.toISOString?.() ?? row.updated_at,
@@ -126,6 +128,7 @@ function workCommentFromRow(row) {
     body: row.body,
     imageUrl: row.image_url,
     status: row.status,
+    likesCount: Number(row.likes_count ?? 0),
     createdAt: row.created_at?.toISOString?.() ?? row.created_at,
     updatedAt: row.updated_at?.toISOString?.() ?? row.updated_at,
     author: row.author_login ? {
@@ -302,6 +305,93 @@ function workViewerFromRow(row) {
       isOnline: isRecentlyOnline(row.viewer_last_seen_at),
       createdAt: toIsoDate(row.viewer_created_at),
       updatedAt: toIsoDate(row.viewer_updated_at),
+    } : null,
+  };
+}
+
+function pageVisitorFromRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    workId: row.work_id,
+    viewerUserId: row.viewer_user_id,
+    viewedAt: toIsoDate(row.viewed_at),
+    workTitle: row.work_title ?? null,
+    workSlug: row.work_slug ?? null,
+    viewer: row.viewer_login ? {
+      id: row.viewer_id ?? row.viewer_user_id,
+      email: row.viewer_email,
+      login: row.viewer_login,
+      displayName: row.viewer_display_name,
+      bio: row.viewer_bio,
+      avatarUrl: row.viewer_avatar_url,
+      coverImageUrl: row.viewer_cover_image_url,
+      city: row.viewer_city,
+      websiteUrl: row.viewer_website_url,
+      ratingTotal: Number(row.viewer_rating_total ?? 0),
+      worksCountCached: Number(row.viewer_works_count_cached ?? 0),
+      isClassic: Boolean(row.viewer_is_classic),
+      isFeatured: Boolean(row.viewer_is_featured),
+      registeredAt: toIsoDate(row.viewer_registered_at),
+      lastSeenAt: toIsoDate(row.viewer_last_seen_at),
+      isOnline: isRecentlyOnline(row.viewer_last_seen_at),
+      createdAt: toIsoDate(row.viewer_created_at),
+      updatedAt: toIsoDate(row.viewer_updated_at),
+    } : null,
+  };
+}
+
+
+function authorReviewFeedItemFromRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    body: row.body,
+    status: row.status,
+    createdAt: toIsoDate(row.created_at),
+    updatedAt: toIsoDate(row.updated_at),
+    workId: row.work_id,
+    workTitle: row.work_title,
+    workSlug: row.work_slug,
+    commentAuthor: row.comment_author_login ? {
+      id: row.comment_author_id,
+      email: row.comment_author_email,
+      login: row.comment_author_login,
+      displayName: row.comment_author_display_name,
+      bio: row.comment_author_bio,
+      avatarUrl: row.comment_author_avatar_url,
+      coverImageUrl: row.comment_author_cover_image_url,
+      city: row.comment_author_city,
+      websiteUrl: row.comment_author_website_url,
+      ratingTotal: Number(row.comment_author_rating_total ?? 0),
+      worksCountCached: Number(row.comment_author_works_count_cached ?? 0),
+      isClassic: Boolean(row.comment_author_is_classic),
+      isFeatured: Boolean(row.comment_author_is_featured),
+      registeredAt: toIsoDate(row.comment_author_registered_at),
+      lastSeenAt: toIsoDate(row.comment_author_last_seen_at),
+      isOnline: isRecentlyOnline(row.comment_author_last_seen_at),
+      createdAt: toIsoDate(row.comment_author_created_at),
+      updatedAt: toIsoDate(row.comment_author_updated_at),
+    } : null,
+    workAuthor: row.work_author_login ? {
+      id: row.work_author_id,
+      email: row.work_author_email,
+      login: row.work_author_login,
+      displayName: row.work_author_display_name,
+      bio: row.work_author_bio,
+      avatarUrl: row.work_author_avatar_url,
+      coverImageUrl: row.work_author_cover_image_url,
+      city: row.work_author_city,
+      websiteUrl: row.work_author_website_url,
+      ratingTotal: Number(row.work_author_rating_total ?? 0),
+      worksCountCached: Number(row.work_author_works_count_cached ?? 0),
+      isClassic: Boolean(row.work_author_is_classic),
+      isFeatured: Boolean(row.work_author_is_featured),
+      registeredAt: toIsoDate(row.work_author_registered_at),
+      lastSeenAt: toIsoDate(row.work_author_last_seen_at),
+      isOnline: isRecentlyOnline(row.work_author_last_seen_at),
+      createdAt: toIsoDate(row.work_author_created_at),
+      updatedAt: toIsoDate(row.work_author_updated_at),
     } : null,
   };
 }
@@ -859,17 +949,46 @@ export function createPostgresRepository(pool) {
 
     async registerWorkView({ workId, viewerUserId }) {
       if (!workId || !viewerUserId) return null;
-      await pool.query(
-        `
-        insert into work_views (work_id, viewer_user_id, viewed_at)
-        values ($1, $2, now())
-        on conflict (work_id, viewer_user_id)
-        where viewer_user_id is not null
-        do update set viewed_at = excluded.viewed_at
-        `,
-        [workId, viewerUserId],
-      );
-      return true;
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        const workRow = await client.query(
+          `
+          select author_user_id
+          from works
+          where id = $1
+          limit 1
+          `,
+          [workId],
+        );
+        const authorUserId = workRow.rows[0]?.author_user_id ?? null;
+        await client.query(
+          `
+          insert into work_views (work_id, viewer_user_id, viewed_at)
+          values ($1, $2, now())
+          on conflict (work_id, viewer_user_id)
+          where viewer_user_id is not null
+          do update set viewed_at = excluded.viewed_at
+          `,
+          [workId, viewerUserId],
+        );
+        if (authorUserId != null) {
+          await client.query(
+            `
+            insert into work_page_views (work_id, author_user_id, viewer_user_id, viewed_at)
+            values ($1, $2, $3, now())
+            `,
+            [workId, authorUserId, viewerUserId],
+          );
+        }
+        await client.query('commit');
+        return true;
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
     },
 
     async listWorkViewers({ workId, limit = 100 }) {
@@ -895,6 +1014,454 @@ export function createPostgresRepository(pool) {
       return rows.map(workViewerFromRow);
     },
 
+    async hasUserLikedWork({ workId, userId }) {
+      if (!workId || !userId) return false;
+      const { rows } = await pool.query(
+        `
+        select 1
+        from work_likes
+        where work_id = $1 and user_id = $2
+        limit 1
+        `,
+        [workId, userId],
+      );
+      return Boolean(rows[0]);
+    },
+
+    async hasUserLikedWorkComment({ commentId, userId }) {
+      if (!commentId || !userId) return false;
+      const { rows } = await pool.query(
+        `
+        select 1
+        from work_comment_likes
+        where comment_id = $1 and user_id = $2
+        limit 1
+        `,
+        [commentId, userId],
+      );
+      return Boolean(rows[0]);
+    },
+
+    async hasWorkAnnouncement({ workId }) {
+      if (!workId) return false;
+      const { rows } = await pool.query(
+        `
+        select 1
+        from work_announcements
+        where work_id = $1
+        limit 1
+        `,
+        [workId],
+      );
+      return Boolean(rows[0]);
+    },
+
+    async toggleWorkLike({ workId, userId }) {
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        const existing = await client.query(
+          `
+          select id
+          from work_likes
+          where work_id = $1 and user_id = $2
+          limit 1
+          `,
+          [workId, userId],
+        );
+        if (existing.rows[0]) {
+          await client.query('delete from work_likes where id = $1', [existing.rows[0].id]);
+        } else {
+          await client.query(
+            `
+            insert into work_likes (work_id, user_id)
+            values ($1, $2)
+            `,
+            [workId, userId],
+          );
+        }
+        await client.query('commit');
+        return await this.getWorkById(workId);
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async toggleWorkCommentLike({ commentId, userId }) {
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        const target = await client.query(
+          `
+          select work_id
+          from work_comments
+          where id = $1 and status = 'visible'
+          limit 1
+          `,
+          [commentId],
+        );
+        if (!target.rows[0]) {
+          throw new Error('Comment not found');
+        }
+        const existing = await client.query(
+          `
+          select id
+          from work_comment_likes
+          where comment_id = $1 and user_id = $2
+          limit 1
+          `,
+          [commentId, userId],
+        );
+        if (existing.rows[0]) {
+          await client.query('delete from work_comment_likes where id = $1', [existing.rows[0].id]);
+        } else {
+          await client.query(
+            `
+            insert into work_comment_likes (comment_id, user_id)
+            values ($1, $2)
+            `,
+            [commentId, userId],
+          );
+        }
+        await client.query('commit');
+        const comments = await this.listWorkComments({ workId: target.rows[0].work_id, limit: 500, offset: 0 });
+        return comments.find((comment) => String(comment.id) === String(commentId)) ?? null;
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async listWorkLikers({ workId, limit = 100 }) {
+      const page = buildLimitOffset(limit, 0);
+      const { rows } = await pool.query(
+        `
+        select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url,
+               ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+        from work_likes wl
+        join users u on u.id = wl.user_id
+        left join author_profiles ap on ap.user_id = u.id
+        where wl.work_id = $1
+        order by wl.created_at desc, wl.id desc
+        limit $2
+        `,
+        [workId, page.limit],
+      );
+      return rows.map(authorFromRow);
+    },
+
+    async listWorkCommentLikers({ commentId, limit = 100 }) {
+      const page = buildLimitOffset(limit, 0);
+      const { rows } = await pool.query(
+        `
+        select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url,
+               ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+        from work_comment_likes wcl
+        join users u on u.id = wcl.user_id
+        left join author_profiles ap on ap.user_id = u.id
+        where wcl.comment_id = $1
+        order by wcl.created_at desc, wcl.id desc
+        limit $2
+        `,
+        [commentId, page.limit],
+      );
+      return rows.map(authorFromRow);
+    },
+
+    async listWorkReaders({ workId, limit = 100 }) {
+      const page = buildLimitOffset(limit, 0);
+      const batchSize = 200;
+      const { rows: statsRows } = await pool.query(
+        `
+        select count(*)::int as total_views
+        from work_page_views
+        where work_id = $1
+        `,
+        [workId],
+      );
+      const totalViews = Number(statsRows[0]?.total_views ?? 0);
+      const lockedViews = Math.floor(totalViews / batchSize) * batchSize;
+      if (!lockedViews) {
+        return { totalViews, lockedViews, batchSize, viewers: [] };
+      }
+      const { rows } = await pool.query(
+        `
+        with ordered_events as (
+          select wpv.*, row_number() over (order by wpv.id asc) as seq
+          from work_page_views wpv
+          where wpv.work_id = $1
+            and wpv.viewer_user_id is not null
+        ),
+        locked_events as (
+          select *
+          from ordered_events
+          where seq <= $2
+        ),
+        latest as (
+          select distinct on (viewer_user_id) *
+          from locked_events
+          order by viewer_user_id, viewed_at desc, id desc
+        )
+        select latest.*,
+               u.id as viewer_id, u.email as viewer_email, u.login as viewer_login, u.registered_at as viewer_registered_at,
+               u.last_seen_at as viewer_last_seen_at, u.created_at as viewer_created_at, u.updated_at as viewer_updated_at,
+               ap.display_name as viewer_display_name, ap.bio as viewer_bio, ap.avatar_url as viewer_avatar_url,
+               ap.cover_image_url as viewer_cover_image_url, ap.city as viewer_city, ap.website_url as viewer_website_url,
+               ap.rating_total as viewer_rating_total, ap.works_count_cached as viewer_works_count_cached,
+               ap.is_classic as viewer_is_classic, ap.is_featured as viewer_is_featured
+        from latest
+        left join users u on u.id = latest.viewer_user_id
+        left join author_profiles ap on ap.user_id = u.id
+        order by latest.viewed_at desc, latest.id desc
+        limit $3
+        `,
+        [workId, lockedViews, page.limit],
+      );
+      return { totalViews, lockedViews, batchSize, viewers: rows.map(workViewerFromRow) };
+    },
+
+    async listAuthorPageVisitorsByWork({ workId, limit = 100 }) {
+      const page = buildLimitOffset(limit, 0);
+      const batchSize = 200;
+      const { rows: workRows } = await pool.query(
+        `
+        select author_user_id
+        from works
+        where id = $1
+        limit 1
+        `,
+        [workId],
+      );
+      const authorUserId = workRows[0]?.author_user_id ?? null;
+      if (!authorUserId) {
+        return { totalViews: 0, lockedViews: 0, batchSize, visitors: [] };
+      }
+      const { rows: statsRows } = await pool.query(
+        `
+        select count(*)::int as total_views
+        from work_page_views
+        where author_user_id = $1
+        `,
+        [authorUserId],
+      );
+      const totalViews = Number(statsRows[0]?.total_views ?? 0);
+      const lockedViews = Math.floor(totalViews / batchSize) * batchSize;
+      if (!lockedViews) {
+        return { totalViews, lockedViews, batchSize, visitors: [] };
+      }
+      const { rows } = await pool.query(
+        `
+        with ordered_events as (
+          select wpv.*, row_number() over (order by wpv.id asc) as seq
+          from work_page_views wpv
+          where wpv.author_user_id = $1
+            and wpv.viewer_user_id is not null
+        ),
+        locked_events as (
+          select *
+          from ordered_events
+          where seq <= $2
+        ),
+        latest as (
+          select distinct on (viewer_user_id) *
+          from locked_events
+          order by viewer_user_id, viewed_at desc, id desc
+        )
+        select latest.*, w.title as work_title, w.slug as work_slug,
+               u.id as viewer_id, u.email as viewer_email, u.login as viewer_login, u.registered_at as viewer_registered_at,
+               u.last_seen_at as viewer_last_seen_at, u.created_at as viewer_created_at, u.updated_at as viewer_updated_at,
+               ap.display_name as viewer_display_name, ap.bio as viewer_bio, ap.avatar_url as viewer_avatar_url,
+               ap.cover_image_url as viewer_cover_image_url, ap.city as viewer_city, ap.website_url as viewer_website_url,
+               ap.rating_total as viewer_rating_total, ap.works_count_cached as viewer_works_count_cached,
+               ap.is_classic as viewer_is_classic, ap.is_featured as viewer_is_featured
+        from latest
+        join works w on w.id = latest.work_id
+        left join users u on u.id = latest.viewer_user_id
+        left join author_profiles ap on ap.user_id = u.id
+        order by latest.viewed_at desc, latest.id desc
+        limit $3
+        `,
+        [authorUserId, lockedViews, page.limit],
+      );
+      return { totalViews, lockedViews, batchSize, visitors: rows.map(pageVisitorFromRow) };
+    },
+
+    async listAnnouncedWorks({ limit = 12 } = {}) {
+      const page = buildLimitOffset(limit, 0);
+      const { rows } = await pool.query(
+        `
+        select w.*, ws.code as section_code, wg.slug as genre_slug,
+               (select count(*)::int from work_likes wl where wl.work_id = w.id) as likes_count,
+               true as announcement_active,
+               u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
+               u.created_at as author_created_at, u.updated_at as author_updated_at,
+               ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
+               ap.website_url as author_website_url, ap.rating_total as author_rating_total,
+               ap.works_count_cached as author_works_count_cached, ap.is_classic as author_is_classic,
+               ap.is_featured as author_is_featured
+        from work_announcements wa
+        join works w on w.id = wa.work_id
+        join work_sections ws on ws.id = w.section_id
+        left join work_genres wg on wg.id = w.genre_id
+        join users u on u.id = w.author_user_id
+        left join author_profiles ap on ap.user_id = u.id
+        where w.status = 'published'
+        order by wa.created_at desc, wa.id desc
+        limit $1
+        `,
+        [page.limit],
+      );
+      return rows.map(workFromRow);
+    },
+
+    async activateWorkAnnouncement({ workId, activatedByUserId }) {
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        const work = await client.query(
+          `
+          select id
+          from works
+          where id = $1 and status = 'published'
+          limit 1
+          `,
+          [workId],
+        );
+        if (!work.rows[0]) {
+          throw new Error('Work not found or not published');
+        }
+
+        const existing = await client.query(
+          `
+          select id
+          from work_announcements
+          where work_id = $1
+          limit 1
+          `,
+          [workId],
+        );
+        if (existing.rows[0]) {
+          await client.query('commit');
+          return await this.getWorkById(workId);
+        }
+
+        const stats = await client.query('select count(*)::int as cnt from work_announcements');
+        const activeCount = Number(stats.rows[0]?.cnt ?? 0);
+        if (activeCount >= 12) {
+          await client.query(
+            `
+            delete from work_announcements
+            where id = (
+              select id
+              from work_announcements
+              order by created_at asc, id asc
+              limit 1
+            )
+            `,
+          );
+        }
+
+        await client.query(
+          `
+          insert into work_announcements (work_id, activated_by_user_id)
+          values ($1, $2)
+          `,
+          [workId, activatedByUserId],
+        );
+        await client.query('commit');
+        return await this.getWorkById(workId);
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async listWrittenWorkComments({ authorUserId, limit = 50 } = {}) {
+      const page = buildLimitOffset(limit, 0);
+      const { rows } = await pool.query(
+        `
+        select wc.id, wc.body, wc.status, wc.created_at, wc.updated_at,
+               w.id as work_id, w.title as work_title, w.slug as work_slug,
+               cu.id as comment_author_id, cu.email as comment_author_email, cu.login as comment_author_login,
+               cu.registered_at as comment_author_registered_at, cu.last_seen_at as comment_author_last_seen_at,
+               cu.created_at as comment_author_created_at, cu.updated_at as comment_author_updated_at,
+               cap.display_name as comment_author_display_name, cap.bio as comment_author_bio,
+               cap.avatar_url as comment_author_avatar_url, cap.cover_image_url as comment_author_cover_image_url,
+               cap.city as comment_author_city, cap.website_url as comment_author_website_url,
+               cap.rating_total as comment_author_rating_total, cap.works_count_cached as comment_author_works_count_cached,
+               cap.is_classic as comment_author_is_classic, cap.is_featured as comment_author_is_featured,
+               wu.id as work_author_id, wu.email as work_author_email, wu.login as work_author_login,
+               wu.registered_at as work_author_registered_at, wu.last_seen_at as work_author_last_seen_at,
+               wu.created_at as work_author_created_at, wu.updated_at as work_author_updated_at,
+               wap.display_name as work_author_display_name, wap.bio as work_author_bio,
+               wap.avatar_url as work_author_avatar_url, wap.cover_image_url as work_author_cover_image_url,
+               wap.city as work_author_city, wap.website_url as work_author_website_url,
+               wap.rating_total as work_author_rating_total, wap.works_count_cached as work_author_works_count_cached,
+               wap.is_classic as work_author_is_classic, wap.is_featured as work_author_is_featured
+        from work_comments wc
+        join works w on w.id = wc.work_id
+        join users cu on cu.id = wc.user_id
+        left join author_profiles cap on cap.user_id = cu.id
+        join users wu on wu.id = w.author_user_id
+        left join author_profiles wap on wap.user_id = wu.id
+        where wc.user_id = $1
+          and w.author_user_id <> $1
+          and wc.status = 'visible'
+        order by wc.created_at desc, wc.id desc
+        limit $2
+        `,
+        [authorUserId, page.limit],
+      );
+      return rows.map(authorReviewFeedItemFromRow);
+    },
+
+    async listReceivedWorkComments({ authorUserId, limit = 50 } = {}) {
+      const page = buildLimitOffset(limit, 0);
+      const { rows } = await pool.query(
+        `
+        select wc.id, wc.body, wc.status, wc.created_at, wc.updated_at,
+               w.id as work_id, w.title as work_title, w.slug as work_slug,
+               cu.id as comment_author_id, cu.email as comment_author_email, cu.login as comment_author_login,
+               cu.registered_at as comment_author_registered_at, cu.last_seen_at as comment_author_last_seen_at,
+               cu.created_at as comment_author_created_at, cu.updated_at as comment_author_updated_at,
+               cap.display_name as comment_author_display_name, cap.bio as comment_author_bio,
+               cap.avatar_url as comment_author_avatar_url, cap.cover_image_url as comment_author_cover_image_url,
+               cap.city as comment_author_city, cap.website_url as comment_author_website_url,
+               cap.rating_total as comment_author_rating_total, cap.works_count_cached as comment_author_works_count_cached,
+               cap.is_classic as comment_author_is_classic, cap.is_featured as comment_author_is_featured,
+               wu.id as work_author_id, wu.email as work_author_email, wu.login as work_author_login,
+               wu.registered_at as work_author_registered_at, wu.last_seen_at as work_author_last_seen_at,
+               wu.created_at as work_author_created_at, wu.updated_at as work_author_updated_at,
+               wap.display_name as work_author_display_name, wap.bio as work_author_bio,
+               wap.avatar_url as work_author_avatar_url, wap.cover_image_url as work_author_cover_image_url,
+               wap.city as work_author_city, wap.website_url as work_author_website_url,
+               wap.rating_total as work_author_rating_total, wap.works_count_cached as work_author_works_count_cached,
+               wap.is_classic as work_author_is_classic, wap.is_featured as work_author_is_featured
+        from work_comments wc
+        join works w on w.id = wc.work_id
+        join users cu on cu.id = wc.user_id
+        left join author_profiles cap on cap.user_id = cu.id
+        join users wu on wu.id = w.author_user_id
+        left join author_profiles wap on wap.user_id = wu.id
+        where w.author_user_id = $1
+          and wc.user_id <> $1
+          and wc.status = 'visible'
+        order by wc.created_at desc, wc.id desc
+        limit $2
+        `,
+        [authorUserId, page.limit],
+      );
+      return rows.map(authorReviewFeedItemFromRow);
+    },
 
     async listWorks({ limit = 20, offset = 0, sectionCode = null, genreSlug = null, authorId = null, search = null, status = 'published' } = {}) {
       const page = buildLimitOffset(limit, offset);
@@ -925,6 +1492,8 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select w.*, ws.code as section_code, wg.slug as genre_slug,
+               (select count(*)::int from work_likes wl where wl.work_id = w.id) as likes_count,
+               exists(select 1 from work_announcements wa where wa.work_id = w.id) as announcement_active,
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
@@ -949,6 +1518,8 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select w.*, ws.code as section_code, wg.slug as genre_slug,
+               (select count(*)::int from work_likes wl where wl.work_id = w.id) as likes_count,
+               exists(select 1 from work_announcements wa where wa.work_id = w.id) as announcement_active,
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
@@ -972,6 +1543,8 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select w.*, ws.code as section_code, wg.slug as genre_slug,
+               (select count(*)::int from work_likes wl where wl.work_id = w.id) as likes_count,
+               exists(select 1 from work_announcements wa where wa.work_id = w.id) as announcement_active,
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
@@ -1199,7 +1772,98 @@ export function createPostgresRepository(pool) {
         await client.query('commit');
         const comment = inserted.rows[0];
         const author = await this.getAuthorByUserId(userId);
-        return workCommentFromRow({ ...comment, author_login: author?.login, author_email: author?.email, author_display_name: author?.displayName, author_bio: author?.bio, author_avatar_url: author?.avatarUrl, author_cover_image_url: author?.coverImageUrl, author_city: author?.city, author_website_url: author?.websiteUrl, author_rating_total: author?.ratingTotal, author_works_count_cached: author?.worksCountCached, author_is_classic: author?.isClassic, author_is_featured: author?.isFeatured, author_registered_at: author?.registeredAt, author_last_seen_at: author?.lastSeenAt, author_created_at: author?.createdAt, author_updated_at: author?.updatedAt, author_id: author?.id });
+        return workCommentFromRow({ ...comment, likes_count: 0, author_login: author?.login, author_email: author?.email, author_display_name: author?.displayName, author_bio: author?.bio, author_avatar_url: author?.avatarUrl, author_cover_image_url: author?.coverImageUrl, author_city: author?.city, author_website_url: author?.websiteUrl, author_rating_total: author?.ratingTotal, author_works_count_cached: author?.worksCountCached, author_is_classic: author?.isClassic, author_is_featured: author?.isFeatured, author_registered_at: author?.registeredAt, author_last_seen_at: author?.lastSeenAt, author_created_at: author?.createdAt, author_updated_at: author?.updatedAt, author_id: author?.id });
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async updateWorkComment({ commentId, userId, canManageAll = false, body, imageUrl = null }) {
+      const normalizedBody = String(body ?? '').trim();
+      if (!normalizedBody) {
+        throw new Error('body is required');
+      }
+      const { rows } = await pool.query(
+        `
+        update work_comments
+        set body = $1,
+            image_url = $2,
+            updated_at = now()
+        where id = $3
+          and status = 'visible'
+          and ($4::boolean = true or user_id = $5)
+        returning *
+        `,
+        [normalizedBody, normalizeOptionalText(imageUrl), commentId, canManageAll, userId],
+      );
+      if (!rows[0]) {
+        throw new Error('Only the author can edit this comment');
+      }
+      const comments = await this.listWorkComments({ workId: rows[0].work_id, limit: 500, offset: 0 });
+      return comments.find((comment) => String(comment.id) === String(commentId)) ?? null;
+    },
+
+    async softDeleteWorkComment({ commentId, actorUserId, canManageAll = false }) {
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        const target = await client.query(
+          `
+          select wc.*, w.author_user_id as work_author_user_id
+          from work_comments wc
+          join works w on w.id = wc.work_id
+          where wc.id = $1
+          limit 1
+          `,
+          [commentId],
+        );
+        const row = target.rows[0];
+        if (!row) {
+          throw new Error('Comment not found');
+        }
+        const canDelete = canManageAll || String(row.user_id) === String(actorUserId) || String(row.work_author_user_id) === String(actorUserId);
+        if (!canDelete) {
+          throw new Error('Only the author, recipient or admin can delete this comment');
+        }
+        await client.query(
+          `
+          with recursive subtree as (
+            select id
+            from work_comments
+            where id = $1
+            union all
+            select wc.id
+            from work_comments wc
+            join subtree s on s.id = wc.parent_comment_id
+          )
+          update work_comments
+          set status = 'deleted',
+              body = 'УДАЛЕНО',
+              image_url = null,
+              updated_at = now()
+          where id in (select id from subtree)
+            and status <> 'deleted'
+          `,
+          [commentId],
+        );
+        await client.query(
+          `
+          update works
+          set comments_count = (
+            select count(*)::int
+            from work_comments
+            where work_id = $1 and status = 'visible'
+          )
+          where id = $1
+          `,
+          [row.work_id],
+        );
+        await client.query('commit');
+        const author = await this.getAuthorByUserId(row.user_id);
+        return workCommentFromRow({ ...row, body: 'УДАЛЕНО', image_url: null, status: 'deleted', likes_count: 0, author_login: author?.login, author_email: author?.email, author_display_name: author?.displayName, author_bio: author?.bio, author_avatar_url: author?.avatarUrl, author_cover_image_url: author?.coverImageUrl, author_city: author?.city, author_website_url: author?.websiteUrl, author_rating_total: author?.ratingTotal, author_works_count_cached: author?.worksCountCached, author_is_classic: author?.isClassic, author_is_featured: author?.isFeatured, author_registered_at: author?.registeredAt, author_last_seen_at: author?.lastSeenAt, author_created_at: author?.createdAt, author_updated_at: author?.updatedAt, author_id: author?.id });
       } catch (error) {
         await client.query('rollback');
         throw error;
@@ -1212,7 +1876,9 @@ export function createPostgresRepository(pool) {
       const page = buildLimitOffset(limit, offset);
       const { rows } = await pool.query(
         `
-        select wc.*, u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
+        select wc.*,
+               (select count(*)::int from work_comment_likes wcl where wcl.comment_id = wc.id) as likes_count,
+               u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
                ap.website_url as author_website_url, ap.rating_total as author_rating_total,
@@ -1328,29 +1994,44 @@ export function createPostgresRepository(pool) {
       }
     },
 
-    async updateForumTopic({ topicId, authorUserId, canManageAll = false, title, body }) {
+    async updateForumTopic({ topicId, authorUserId, canManageAll = false, sectionSlug, title, body }) {
+      const normalizedSectionSlug = String(sectionSlug ?? '').trim();
       const normalizedTitle = String(title ?? '').trim();
       const normalizedBody = String(body ?? '').trim();
+      if (!normalizedSectionSlug) throw new Error('sectionSlug is required');
       if (!normalizedTitle) throw new Error('title is required');
       if (!normalizedBody) throw new Error('body is required');
 
-      const { rows } = await pool.query(
-        `
-        update forum_topics
-        set title = $1,
-            body = $2,
-            updated_at = now()
-        where id = $3
-          and ($4::boolean = true or author_user_id = $5)
-          and status in ('open', 'closed')
-        returning id
-        `,
-        [normalizedTitle, normalizedBody, topicId, canManageAll, authorUserId],
-      );
-      if (!rows[0]) {
-        throw new Error('Only the owner can edit this topic');
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        const section = await client.query('select id from forum_sections where slug = $1 limit 1', [normalizedSectionSlug]);
+        if (!section.rows[0]) throw new Error(`Unknown sectionSlug: ${normalizedSectionSlug}`);
+        const { rows } = await client.query(
+          `
+          update forum_topics
+          set section_id = $1,
+              title = $2,
+              body = $3,
+              updated_at = now()
+          where id = $4
+            and ($5::boolean = true or author_user_id = $6)
+            and status in ('open', 'closed')
+          returning id
+          `,
+          [section.rows[0].id, normalizedTitle, normalizedBody, topicId, canManageAll, authorUserId],
+        );
+        if (!rows[0]) {
+          throw new Error('Only the owner can edit this topic');
+        }
+        await client.query('commit');
+        return await this.getForumTopic({ id: topicId });
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
       }
-      return await this.getForumTopic({ id: topicId });
     },
 
     async softDeleteForumTopic({ topicId, authorUserId, canManageAll = false }) {
@@ -1472,22 +2153,43 @@ export function createPostgresRepository(pool) {
       const client = await pool.connect();
       try {
         await client.query('begin');
-        const updated = await client.query(
+        const target = await client.query(
           `
-          update forum_posts
-          set status = 'deleted',
-              updated_at = now()
+          select *
+          from forum_posts
           where id = $1
-            and ($2::boolean = true or author_user_id = $3)
-            and status <> 'deleted'
-          returning *
+          limit 1
           `,
-          [postId, canManageAll, authorUserId],
+          [postId],
         );
-        const row = updated.rows[0];
+        const row = target.rows[0];
         if (!row) {
+          throw new Error('Message not found');
+        }
+        if (!canManageAll && String(row.author_user_id) !== String(authorUserId)) {
           throw new Error('Only the owner can delete this message');
         }
+        await client.query(
+          `
+          with recursive subtree as (
+            select id
+            from forum_posts
+            where id = $1
+            union all
+            select fp.id
+            from forum_posts fp
+            join subtree s on s.id = fp.parent_post_id
+          )
+          update forum_posts
+          set status = 'deleted',
+              body = 'УДАЛЕНО',
+              image_url = null,
+              updated_at = now()
+          where id in (select id from subtree)
+            and status <> 'deleted'
+          `,
+          [postId],
+        );
         await client.query(
           `
           update forum_topics ft
@@ -1515,7 +2217,7 @@ export function createPostgresRepository(pool) {
         );
         await client.query('commit');
         const author = await this.getAuthorByUserId(row.author_user_id);
-        return forumPostFromRow({ ...row, author_id: author?.id, author_email: author?.email, author_login: author?.login, author_display_name: author?.displayName, author_bio: author?.bio, author_avatar_url: author?.avatarUrl, author_cover_image_url: author?.coverImageUrl, author_city: author?.city, author_website_url: author?.websiteUrl, author_rating_total: author?.ratingTotal, author_works_count_cached: author?.worksCountCached, author_is_classic: author?.isClassic, author_is_featured: author?.isFeatured, author_registered_at: author?.registeredAt, author_last_seen_at: author?.lastSeenAt, author_created_at: author?.createdAt, author_updated_at: author?.updatedAt });
+        return forumPostFromRow({ ...row, body: 'УДАЛЕНО', image_url: null, status: 'deleted', author_id: author?.id, author_email: author?.email, author_login: author?.login, author_display_name: author?.displayName, author_bio: author?.bio, author_avatar_url: author?.avatarUrl, author_cover_image_url: author?.coverImageUrl, author_city: author?.city, author_website_url: author?.websiteUrl, author_rating_total: author?.ratingTotal, author_works_count_cached: author?.worksCountCached, author_is_classic: author?.isClassic, author_is_featured: author?.isFeatured, author_registered_at: author?.registeredAt, author_last_seen_at: author?.lastSeenAt, author_created_at: author?.createdAt, author_updated_at: author?.updatedAt });
       } catch (error) {
         await client.query('rollback');
         throw error;
@@ -1539,96 +2241,3 @@ export function createPostgresRepository(pool) {
         where fp.topic_id = $1
           and fp.status = 'visible'
         order by fp.created_at asc
-        `,
-        [topicId],
-      );
-      return rows.map(forumPostFromRow);
-    },
-
-    async listContests({ status = null, scope = null, limit = 20, offset = 0 } = {}) {
-      const page = buildLimitOffset(limit, offset);
-      const conditions = [];
-      const params = [];
-      if (status) {
-        params.push(status);
-        conditions.push(`status = $${params.length}`);
-      }
-      if (scope) {
-        params.push(scope);
-        conditions.push(`contest_scope = $${params.length}`);
-      }
-      params.push(page.limit, page.offset);
-      const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
-      const { rows } = await pool.query(
-        `
-        select *
-        from contests
-        ${where}
-        order by starts_at desc nulls last, created_at desc
-        limit $${params.length - 1} offset $${params.length}
-        `,
-        params,
-      );
-      return rows.map(contestFromRow);
-    },
-
-    async createRadioTrack({ title, authorName = null, durationSeconds = null, audioUrl, sourceUrl = null, workId = null }) {
-      const normalizedTitle = String(title ?? '').trim();
-      if (!normalizedTitle) {
-        throw new Error('title is required');
-      }
-
-      const normalizedAudioUrl = normalizeOptionalText(audioUrl);
-      if (!normalizedAudioUrl) {
-        throw new Error('audioUrl is required');
-      }
-
-      const normalizedDuration = durationSeconds == null || durationSeconds === ''
-        ? null
-        : Math.max(0, Number.parseInt(durationSeconds, 10) || 0);
-
-      const { rows } = await pool.query(
-        `
-        insert into radio_tracks (
-          title,
-          author_name,
-          work_id,
-          duration_seconds,
-          audio_url,
-          source_url
-        )
-        values ($1, $2, $3, $4, $5, $6)
-        returning *
-        `,
-        [
-          normalizedTitle,
-          normalizeOptionalText(authorName),
-          workId || null,
-          normalizedDuration,
-          normalizedAudioUrl,
-          normalizeOptionalText(sourceUrl),
-        ],
-      );
-
-      return radioTrackFromRow(rows[0]);
-    },
-
-    async listRadioTracks({ limit = 20, offset = 0 } = {}) {
-      const page = buildLimitOffset(limit, offset);
-      const { rows } = await pool.query(
-        `
-        select rt.*,
-               coalesce(avg(rtr.rating), 0)::numeric(4,2) as average_rating,
-               count(rtr.id)::int as ratings_count
-        from radio_tracks rt
-        left join radio_track_ratings rtr on rtr.track_id = rt.id
-        group by rt.id
-        order by rt.created_at desc
-        limit $1 offset $2
-        `,
-        [page.limit, page.offset],
-      );
-      return rows.map(radioTrackFromRow);
-    },
-  };
-}

@@ -128,7 +128,7 @@ function resolveProfileStorageDir(env) {
 }
 
 function resolveDiscussionStorageDir(env) {
-  const configured = String(env.DISCUSSION_UPLOAD_DIR || '').trim();
+  const configured = String(env.DISCUSSION_UPLOAD_DIR || env.FORUM_UPLOAD_DIR || '').trim();
   return configured ? resolve(configured) : resolve(process.cwd(), 'uploads', 'forum');
 }
 
@@ -447,8 +447,6 @@ async function handleDiscussionImageUploadRequest({ req, res, pathname, repo, jw
 }
 
 async function handleProfileImageUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env }) {
-
-  console.log(pathname ,PROFILE_IMAGE_UPLOAD_ENDPOINT)
   if (pathname !== PROFILE_IMAGE_UPLOAD_ENDPOINT) {
     return false;
   }
