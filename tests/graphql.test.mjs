@@ -48,6 +48,31 @@ function makeFakeRepo() {
     async getUserById(id) {
       return users.find((user) => String(user.id) === String(id)) ?? null;
     },
+    async getAuthor({ id = null, login = null } = {}) {
+      const user = users.find((item) => (
+        (id != null && String(item.id) === String(id))
+        || (login != null && String(item.login) === String(login))
+      ));
+      if (!user) return null;
+      return {
+        id: user.id,
+        login: user.login,
+        email: user.email,
+        displayName: user.profile.displayName,
+        bio: user.profile.bio,
+        avatarUrl: user.profile.avatarUrl ?? null,
+        coverImageUrl: user.profile.coverImageUrl ?? null,
+        city: user.profile.city,
+        websiteUrl: user.profile.websiteUrl,
+        ratingTotal: user.profile.ratingTotal,
+        worksCountCached: user.profile.worksCountCached,
+        isClassic: user.profile.isClassic,
+        isFeatured: user.profile.isFeatured,
+        registeredAt: user.registeredAt,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      };
+    },
     async updateUserProfile({ userId, displayName, bio = null, city = null, websiteUrl = null }) {
       const user = users.find((item) => String(item.id) === String(userId));
       if (!user) return null;
@@ -95,7 +120,7 @@ function makeFakeRepo() {
         sectionCode,
         genreSlug: null,
         authorUserId,
-        author: users.find((user) => String(user.id) === String(authorUserId)) ?? null,
+        author: await this.getAuthor({ id: authorUserId }),
         commentsCount: 0,
         ratingsCount: 0,
         averageRating: 0,
@@ -220,6 +245,100 @@ test('updateMyProfile saves current user profile fields', async () => {
   assert.equal(result.body.singleResult.data.updateMyProfile.profile.city, 'Москва');
   assert.equal(result.body.singleResult.data.updateMyProfile.profile.websiteUrl, 'https://example.com');
   assert.equal(result.body.singleResult.data.updateMyProfile.profile.bio, 'Обновлённое описание');
+
+  await server.stop();
+});
+
+test('admin can update classic author profile and publish work on their page', async () => {
+  const repo = makeFakeRepo();
+  const classic = await repo.createUser({
+    email: 'classic@example.com',
+    login: 'classic',
+    passwordHash: 'hash',
+    displayName: 'Классик'
+  });
+  classic.profile.isClassic = true;
+
+  const adminUser = {
+    id: 999,
+    email: 'admin@example.com',
+    login: 'admin',
+    role: 'admin',
+    status: 'active',
+    registeredAt: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    profile: { displayName: 'Админ' },
+  };
+
+  const server = createApolloServer({ repo, jwtSecret: 'test-secret' });
+  await server.start();
+
+  const updateResult = await server.executeOperation({
+    query: `mutation UpdateClassic($authorId: ID!, $input: UpdateMyProfileInput!) {
+      adminUpdateAuthorProfile(authorId: $authorId, input: $input) {
+        id
+        displayName
+        city
+        bio
+        websiteUrl
+      }
+    }`,
+    variables: {
+      authorId: classic.id,
+      input: {
+        displayName: 'Обновлённый классик',
+        city: 'Москва',
+        websiteUrl: 'https://classic.example.com',
+        bio: 'Новая биография'
+      }
+    }
+  }, {
+    contextValue: {
+      repo,
+      jwtSecret: 'test-secret',
+      currentUser: adminUser,
+      authHeader: '',
+      adminUserIds: new Set(['999']),
+    }
+  });
+
+  assert.equal(updateResult.body.kind, 'single');
+  assert.equal(updateResult.body.singleResult.data.adminUpdateAuthorProfile.displayName, 'Обновлённый классик');
+  assert.equal(updateResult.body.singleResult.data.adminUpdateAuthorProfile.city, 'Москва');
+
+  const workResult = await server.executeOperation({
+    query: `mutation CreateClassicWork($authorId: ID!, $input: CreateWorkInput!) {
+      adminCreateWork(authorId: $authorId, input: $input) {
+        id
+        title
+        author { id login displayName }
+      }
+    }`,
+    variables: {
+      authorId: classic.id,
+      input: {
+        sectionCode: 'poetry',
+        title: 'Новый текст классика',
+        summary: 'summary',
+        body: 'body',
+        excerpt: 'summary'
+      }
+    }
+  }, {
+    contextValue: {
+      repo,
+      jwtSecret: 'test-secret',
+      currentUser: adminUser,
+      authHeader: '',
+      adminUserIds: new Set(['999']),
+    }
+  });
+
+  assert.equal(workResult.body.kind, 'single');
+  assert.equal(workResult.body.singleResult.data.adminCreateWork.title, 'Новый текст классика');
+  assert.equal(String(workResult.body.singleResult.data.adminCreateWork.author.id), String(classic.id));
+  assert.equal(workResult.body.singleResult.data.adminCreateWork.author.displayName, 'Обновлённый классик');
 
   await server.stop();
 });
