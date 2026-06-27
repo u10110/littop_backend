@@ -2,6 +2,15 @@ import { ApolloServer } from '@apollo/server';
 import { GraphQLError } from 'graphql';
 
 import { decodeToken, getCurrentUserFromHeader, hashPassword, issueToken, verifyPassword } from './auth.mjs';
+import {
+  buildPasswordResetToken,
+  buildPasswordResetUrl,
+  isValidEmail,
+  matchesPasswordResetToken,
+  normalizeEmail,
+  validatePassword,
+  verifyPasswordResetToken,
+} from './email.mjs';
 
 const typeDefs = `#graphql
   type Health {
@@ -230,13 +239,12 @@ const typeDefs = `#graphql
 
   input RegisterInput {
     email: String!
-    login: String!
     password: String!
     displayName: String!
   }
 
   input LoginInput {
-    identifier: String!
+    email: String!
     password: String!
   }
 
@@ -310,12 +318,12 @@ const typeDefs = `#graphql
   type Mutation {
     register(input: RegisterInput!): AuthPayload!
     login(input: LoginInput!): AuthPayload!
+    requestPasswordReset(email: String!): Boolean!
+    resetPassword(token: String!, password: String!): AuthPayload!
     touchPresence: User!
     updateMyProfile(input: UpdateMyProfileInput!): User!
-    adminUpdateAuthorProfile(authorId: ID!, input: UpdateMyProfileInput!): Author!
     closeMyAccount: Boolean!
     createWork(input: CreateWorkInput!): Work!
-    adminCreateWork(authorId: ID!, input: CreateWorkInput!): Work!
     updateWork(workId: ID!, input: UpdateWorkInput!): Work!
     deleteWork(workId: ID!): Work!
     activateWorkAnnouncement(workId: ID!): Work!
@@ -369,7 +377,39 @@ function resolveOnlineFlag(entity) {
   return Date.now() - timestamp <= ONLINE_WINDOW_MS;
 }
 
-const resolvers = {
+function badUserInput(message) {
+  return new GraphQLError(message, {
+    extensions: { code: 'BAD_USER_INPUT' },
+  });
+}
+
+function normalizeRequiredEmail(rawValue) {
+  const email = normalizeEmail(rawValue);
+  if (!isValidEmail(email)) {
+    throw badUserInput('Введите корректный email.');
+  }
+  return email;
+}
+
+function normalizeRequiredPassword(rawValue) {
+  const password = String(rawValue ?? '');
+  const validationMessage = validatePassword(password);
+  if (validationMessage) {
+    throw badUserInput(validationMessage);
+  }
+  return password;
+}
+
+function normalizeRequiredDisplayName(rawValue) {
+  const displayName = typeof rawValue === 'string' ? rawValue.trim() : '';
+  if (!displayName) {
+    throw badUserInput('Display name is required');
+  }
+  return displayName;
+}
+
+function createResolvers({ mailer = { enabled: false }, frontendBaseUrl = '' } = {}) {
+  return {
   Query: {
     health: async (_, __, { repo }) => ({ status: 'ok', ok: true, database: await repo.ping() }),
     me: async (_, __, { currentUser }) => currentUser ?? null,
@@ -415,19 +455,41 @@ const resolvers = {
   },
   Mutation: {
     register: async (_, { input }, { repo, jwtSecret }) => {
-      const existing = await repo.findUserByEmailOrLogin(input.email, input.login);
+      if (!mailer?.enabled) {
+        throw new GraphQLError('Почтовая отправка не настроена на сервере.', {
+          extensions: { code: 'FAILED_PRECONDITION' },
+        });
+      }
+
+      const email = normalizeRequiredEmail(input.email);
+      const password = normalizeRequiredPassword(input.password);
+      const displayName = normalizeRequiredDisplayName(input.displayName);
+      const existing = await (repo.getUserByEmail?.(email) ?? repo.findUserByEmailOrLogin(email, ''));
       if (existing) {
-        throw new GraphQLError('User with this email or login already exists', {
+        throw new GraphQLError('User with this email already exists', {
           extensions: { code: 'CONFLICT' },
         });
       }
-      const passwordHash = await hashPassword(input.password);
-      const user = await repo.createUser({ ...input, passwordHash });
+
+      const passwordHash = await hashPassword(password);
+      const user = await repo.createUser({ email, passwordHash, displayName });
+
+      try {
+        await mailer.sendWelcomeEmail({
+          to: email,
+          displayName,
+          appUrl: frontendBaseUrl,
+        });
+      } catch (error) {
+        console.error('Failed to send welcome email', error);
+      }
+
       const token = issueToken(user, jwtSecret);
       return { token, user };
     },
     login: async (_, { input }, { repo, jwtSecret }) => {
-      const user = await repo.getUserByIdentifier(input.identifier);
+      const email = normalizeRequiredEmail(input.email);
+      const user = await (repo.getUserByEmail?.(email) ?? repo.getUserByIdentifier(email));
       if (!user || !(await verifyPassword(input.password, user.passwordHash))) {
         throw new GraphQLError('Invalid credentials', {
           extensions: { code: 'UNAUTHENTICATED' },
@@ -436,18 +498,58 @@ const resolvers = {
       const token = issueToken(user, jwtSecret);
       return { token, user };
     },
+    requestPasswordReset: async (_, { email }, { repo, jwtSecret }) => {
+      if (!mailer?.enabled) {
+        throw new GraphQLError('Почтовая отправка не настроена на сервере.', {
+          extensions: { code: 'FAILED_PRECONDITION' },
+        });
+      }
+
+      const normalizedEmail = normalizeRequiredEmail(email);
+      const user = await (repo.getUserByEmail?.(normalizedEmail) ?? repo.getUserByIdentifier(normalizedEmail));
+      if (!user) {
+        return true;
+      }
+
+      const token = buildPasswordResetToken(user, jwtSecret);
+      const resetUrl = buildPasswordResetUrl(frontendBaseUrl, token);
+      await mailer.sendPasswordResetEmail({
+        to: normalizedEmail,
+        displayName: user.profile?.displayName || user.login || 'Автор',
+        resetUrl,
+      });
+      return true;
+    },
+    resetPassword: async (_, { token, password }, { repo, jwtSecret }) => {
+      let payload;
+      try {
+        payload = verifyPasswordResetToken(token, jwtSecret);
+      } catch {
+        throw new GraphQLError('Ссылка восстановления недействительна или истекла.', {
+          extensions: { code: 'UNAUTHENTICATED' },
+        });
+      }
+
+      const user = await repo.getUserById(payload.sub);
+      if (!user || !matchesPasswordResetToken(user, payload)) {
+        throw new GraphQLError('Ссылка восстановления недействительна или истекла.', {
+          extensions: { code: 'UNAUTHENTICATED' },
+        });
+      }
+
+      const nextPassword = normalizeRequiredPassword(password);
+      const passwordHash = await hashPassword(nextPassword);
+      const updatedUser = await repo.updateUserPassword({ userId: user.id, passwordHash });
+      const authToken = issueToken(updatedUser, jwtSecret);
+      return { token: authToken, user: updatedUser };
+    },
     touchPresence: async (_, __, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
       return applyAdminAccess(await repo.touchUserPresence(user.id), adminUserIds);
     },
     updateMyProfile: async (_, { input }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
-      const displayName = typeof input.displayName === 'string' ? input.displayName.trim() : '';
-      if (!displayName) {
-        throw new GraphQLError('Display name is required', {
-          extensions: { code: 'BAD_USER_INPUT' },
-        });
-      }
+      const displayName = normalizeRequiredDisplayName(input.displayName);
       return repo.updateUserProfile({
         userId: user.id,
         displayName,
@@ -458,30 +560,6 @@ const resolvers = {
         websiteUrl: input.websiteUrl,
       });
     },
-    adminUpdateAuthorProfile: async (_, { authorId, input }, { currentUser, repo, adminUserIds }) => {
-      const user = requireAuth(currentUser);
-      if (!isAdminUser(user, adminUserIds)) {
-        throw new GraphQLError('Only admin can edit classic author pages', {
-          extensions: { code: 'FORBIDDEN' },
-        });
-      }
-      const displayName = typeof input.displayName === 'string' ? input.displayName.trim() : '';
-      if (!displayName) {
-        throw new GraphQLError('Display name is required', {
-          extensions: { code: 'BAD_USER_INPUT' },
-        });
-      }
-      await repo.updateUserProfile({
-        userId: authorId,
-        displayName,
-        bio: input.bio,
-        avatarUrl: input.avatarUrl,
-        coverImageUrl: input.coverImageUrl,
-        city: input.city,
-        websiteUrl: input.websiteUrl,
-      });
-      return repo.getAuthor({ id: authorId });
-    },
     closeMyAccount: async (_, __, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
       return repo.closeUserAccount({ userId: user.id });
@@ -489,15 +567,6 @@ const resolvers = {
     createWork: async (_, { input }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
       return repo.createWork({ ...input, authorUserId: user.id });
-    },
-    adminCreateWork: async (_, { authorId, input }, { currentUser, repo, adminUserIds }) => {
-      const user = requireAuth(currentUser);
-      if (!isAdminUser(user, adminUserIds)) {
-        throw new GraphQLError('Only admin can publish works for classic author pages', {
-          extensions: { code: 'FORBIDDEN' },
-        });
-      }
-      return repo.createWork({ ...input, authorUserId: authorId });
     },
     updateWork: async (_, { workId, input }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
@@ -597,12 +666,13 @@ const resolvers = {
   ForumPost: {
     author: async (parent, _, { repo }) => parent.author ?? repo.getAuthorByUserId(parent.userId),
   },
-};
+  };
+}
 
-export function createApolloServer({ repo, jwtSecret, adminUserIds = new Set() }) {
+export function createApolloServer({ repo, jwtSecret, adminUserIds = new Set(), mailer = { enabled: false }, frontendBaseUrl = '' }) {
   return new ApolloServer({
     typeDefs,
-    resolvers,
+    resolvers: createResolvers({ mailer, frontendBaseUrl }),
     introspection: true,
   });
 }

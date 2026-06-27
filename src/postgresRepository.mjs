@@ -479,17 +479,33 @@ export function createPostgresRepository(pool) {
       return userFromRow(rows[0]);
     },
 
-    async createUser({ email, login, passwordHash, displayName }) {
+    async createUser({ email, login = null, passwordHash, displayName }) {
+      const normalizedEmail = normalizeOptionalText(email);
+      const normalizedDisplayName = String(displayName ?? '').trim();
+      if (!normalizedEmail) {
+        throw new Error('email is required');
+      }
+      if (!normalizedDisplayName) {
+        throw new Error('displayName is required');
+      }
+      if (!passwordHash) {
+        throw new Error('passwordHash is required');
+      }
+
       const client = await pool.connect();
       try {
         await client.query('begin');
+        const allocatedLogin = await buildUniqueLogin(
+          client,
+          normalizeLoginCandidate(login || normalizedEmail.split('@')[0], 'author'),
+        );
         const inserted = await client.query(
           `
           insert into users (email, login, password_hash)
           values ($1, $2, $3)
-          returning id, author_user_id
+          returning id
           `,
-          [email, login, passwordHash],
+          [normalizedEmail, allocatedLogin, passwordHash],
         );
         const userId = inserted.rows[0].id;
         await client.query(
@@ -497,7 +513,7 @@ export function createPostgresRepository(pool) {
           insert into author_profiles (user_id, display_name)
           values ($1, $2)
           `,
-          [userId, displayName],
+          [userId, normalizedDisplayName],
         );
         await client.query('commit');
         return await this.getUserById(userId);
@@ -539,6 +555,31 @@ export function createPostgresRepository(pool) {
         [normalizedEmail],
       );
       return userFromRow(rows[0]);
+    },
+
+    async getUserByEmail(email) {
+      return this.findUserByEmail(email);
+    },
+
+    async updateUserPassword({ userId, passwordHash }) {
+      if (!userId) {
+        throw new Error('userId is required');
+      }
+      if (!passwordHash) {
+        throw new Error('passwordHash is required');
+      }
+
+      await pool.query(
+        `
+        update users
+        set password_hash = $2,
+            updated_at = now()
+        where id = $1
+        `,
+        [userId, passwordHash],
+      );
+
+      return this.getUserById(userId);
     },
 
     async getUserBySocialAccount({ provider, providerUserId }) {

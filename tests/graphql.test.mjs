@@ -2,13 +2,34 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createApolloServer } from '../src/createServer.mjs';
-import { issueToken } from '../src/auth.mjs';
+import { hashPassword, issueToken } from '../src/auth.mjs';
 
 function makeFakeRepo() {
   let userId = 1;
   let workId = 100;
   const users = [];
   const works = [];
+
+  function buildLoginCandidate(value) {
+    return String(value ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/@.*$/, '')
+      .replace(/[^a-z0-9а-яё_-]+/giu, '-')
+      .replace(/-{2,}/g, '-')
+      .replace(/^-+|-+$/g, '') || 'author';
+  }
+
+  function allocateLogin(inputLogin, email) {
+    const base = buildLoginCandidate(inputLogin || email);
+    let candidate = base;
+    let suffix = 2;
+    while (users.some((user) => user.login === candidate)) {
+      candidate = `${base}-${suffix}`;
+      suffix += 1;
+    }
+    return candidate;
+  }
 
   return {
     async ping() {
@@ -20,11 +41,14 @@ function makeFakeRepo() {
     async getUserByIdentifier(identifier) {
       return users.find((user) => user.email === identifier || user.login === identifier) ?? null;
     },
+    async getUserByEmail(email) {
+      return users.find((user) => user.email === email) ?? null;
+    },
     async createUser({ email, login, passwordHash, displayName }) {
       const user = {
         id: userId++,
         email,
-        login,
+        login: allocateLogin(login, email),
         passwordHash,
         role: 'author',
         status: 'active',
@@ -45,33 +69,15 @@ function makeFakeRepo() {
       users.push(user);
       return user;
     },
+    async updateUserPassword({ userId, passwordHash }) {
+      const user = users.find((item) => String(item.id) === String(userId));
+      if (!user) return null;
+      user.passwordHash = passwordHash;
+      user.updatedAt = new Date().toISOString();
+      return user;
+    },
     async getUserById(id) {
       return users.find((user) => String(user.id) === String(id)) ?? null;
-    },
-    async getAuthor({ id = null, login = null } = {}) {
-      const user = users.find((item) => (
-        (id != null && String(item.id) === String(id))
-        || (login != null && String(item.login) === String(login))
-      ));
-      if (!user) return null;
-      return {
-        id: user.id,
-        login: user.login,
-        email: user.email,
-        displayName: user.profile.displayName,
-        bio: user.profile.bio,
-        avatarUrl: user.profile.avatarUrl ?? null,
-        coverImageUrl: user.profile.coverImageUrl ?? null,
-        city: user.profile.city,
-        websiteUrl: user.profile.websiteUrl,
-        ratingTotal: user.profile.ratingTotal,
-        worksCountCached: user.profile.worksCountCached,
-        isClassic: user.profile.isClassic,
-        isFeatured: user.profile.isFeatured,
-        registeredAt: user.registeredAt,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt,
-      };
     },
     async updateUserProfile({ userId, displayName, bio = null, city = null, websiteUrl = null }) {
       const user = users.find((item) => String(item.id) === String(userId));
@@ -120,7 +126,7 @@ function makeFakeRepo() {
         sectionCode,
         genreSlug: null,
         authorUserId,
-        author: await this.getAuthor({ id: authorUserId }),
+        author: users.find((user) => String(user.id) === String(authorUserId)) ?? null,
         commentsCount: 0,
         ratingsCount: 0,
         averageRating: 0,
@@ -173,7 +179,17 @@ test('health query works', async () => {
 
 test('register mutation returns token and user', async () => {
   const repo = makeFakeRepo();
-  const server = createApolloServer({ repo, jwtSecret: 'test-secret' });
+  const sentEmails = [];
+  const server = createApolloServer({
+    repo,
+    jwtSecret: 'test-secret',
+    mailer: {
+      enabled: true,
+      async sendWelcomeEmail(payload) {
+        sentEmails.push(payload);
+      },
+    },
+  });
   await server.start();
   const result = await server.executeOperation({
     query: `mutation Register($input: RegisterInput!) {
@@ -185,7 +201,6 @@ test('register mutation returns token and user', async () => {
     variables: {
       input: {
         email: 'neo@example.com',
-        login: 'neo',
         password: 's3cret-pass',
         displayName: 'Neo'
       }
@@ -197,6 +212,43 @@ test('register mutation returns token and user', async () => {
   assert.equal(result.body.singleResult.data.register.user.login, 'neo');
   assert.equal(result.body.singleResult.data.register.user.profile.displayName, 'Neo');
   assert.ok(result.body.singleResult.data.register.token);
+  assert.equal(sentEmails.length, 1);
+  assert.equal(sentEmails[0].to, 'neo@example.com');
+  await server.stop();
+});
+
+test('login mutation authenticates by email', async () => {
+  const repo = makeFakeRepo();
+  const passwordHash = await hashPassword('s3cret-pass');
+  await repo.createUser({
+    email: 'reader@example.com',
+    passwordHash,
+    displayName: 'Reader'
+  });
+  const server = createApolloServer({ repo, jwtSecret: 'test-secret' });
+  await server.start();
+
+  const result = await server.executeOperation({
+    query: `mutation Login($input: LoginInput!) {
+      login(input: $input) {
+        token
+        user { id email login }
+      }
+    }`,
+    variables: {
+      input: {
+        email: 'reader@example.com',
+        password: 's3cret-pass'
+      }
+    }
+  }, {
+    contextValue: { repo, jwtSecret: 'test-secret', currentUser: null, authHeader: '' }
+  });
+
+  assert.equal(result.body.kind, 'single');
+  assert.equal(result.body.singleResult.data.login.user.email, 'reader@example.com');
+  assert.ok(result.body.singleResult.data.login.token);
+
   await server.stop();
 });
 
@@ -245,100 +297,6 @@ test('updateMyProfile saves current user profile fields', async () => {
   assert.equal(result.body.singleResult.data.updateMyProfile.profile.city, 'Москва');
   assert.equal(result.body.singleResult.data.updateMyProfile.profile.websiteUrl, 'https://example.com');
   assert.equal(result.body.singleResult.data.updateMyProfile.profile.bio, 'Обновлённое описание');
-
-  await server.stop();
-});
-
-test('admin can update classic author profile and publish work on their page', async () => {
-  const repo = makeFakeRepo();
-  const classic = await repo.createUser({
-    email: 'classic@example.com',
-    login: 'classic',
-    passwordHash: 'hash',
-    displayName: 'Классик'
-  });
-  classic.profile.isClassic = true;
-
-  const adminUser = {
-    id: 999,
-    email: 'admin@example.com',
-    login: 'admin',
-    role: 'admin',
-    status: 'active',
-    registeredAt: new Date().toISOString(),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    profile: { displayName: 'Админ' },
-  };
-
-  const server = createApolloServer({ repo, jwtSecret: 'test-secret' });
-  await server.start();
-
-  const updateResult = await server.executeOperation({
-    query: `mutation UpdateClassic($authorId: ID!, $input: UpdateMyProfileInput!) {
-      adminUpdateAuthorProfile(authorId: $authorId, input: $input) {
-        id
-        displayName
-        city
-        bio
-        websiteUrl
-      }
-    }`,
-    variables: {
-      authorId: classic.id,
-      input: {
-        displayName: 'Обновлённый классик',
-        city: 'Москва',
-        websiteUrl: 'https://classic.example.com',
-        bio: 'Новая биография'
-      }
-    }
-  }, {
-    contextValue: {
-      repo,
-      jwtSecret: 'test-secret',
-      currentUser: adminUser,
-      authHeader: '',
-      adminUserIds: new Set(['999']),
-    }
-  });
-
-  assert.equal(updateResult.body.kind, 'single');
-  assert.equal(updateResult.body.singleResult.data.adminUpdateAuthorProfile.displayName, 'Обновлённый классик');
-  assert.equal(updateResult.body.singleResult.data.adminUpdateAuthorProfile.city, 'Москва');
-
-  const workResult = await server.executeOperation({
-    query: `mutation CreateClassicWork($authorId: ID!, $input: CreateWorkInput!) {
-      adminCreateWork(authorId: $authorId, input: $input) {
-        id
-        title
-        author { id login displayName }
-      }
-    }`,
-    variables: {
-      authorId: classic.id,
-      input: {
-        sectionCode: 'poetry',
-        title: 'Новый текст классика',
-        summary: 'summary',
-        body: 'body',
-        excerpt: 'summary'
-      }
-    }
-  }, {
-    contextValue: {
-      repo,
-      jwtSecret: 'test-secret',
-      currentUser: adminUser,
-      authHeader: '',
-      adminUserIds: new Set(['999']),
-    }
-  });
-
-  assert.equal(workResult.body.kind, 'single');
-  assert.equal(workResult.body.singleResult.data.adminCreateWork.title, 'Новый текст классика');
-  assert.equal(String(workResult.body.singleResult.data.adminCreateWork.author.id), String(classic.id));
-  assert.equal(workResult.body.singleResult.data.adminCreateWork.author.displayName, 'Обновлённый классик');
 
   await server.stop();
 });
