@@ -1002,7 +1002,7 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select 1
-        from work_dislikes
+        from public.work_dislikes
         where work_id = $1 and user_id = $2
         limit 1
         `,
@@ -1041,7 +1041,7 @@ export function createPostgresRepository(pool) {
         if (existing.rows[0]) {
           await client.query('delete from work_likes where id = $1', [existing.rows[0].id]);
         } else {
-          await client.query('delete from work_dislikes where work_id = $1 and user_id = $2', [workId, userId]);
+          await client.query('delete from public.work_dislikes where work_id = $1 and user_id = $2', [workId, userId]);
           await client.query(
             `
             insert into work_likes (work_id, user_id)
@@ -1067,19 +1067,19 @@ export function createPostgresRepository(pool) {
         const existing = await client.query(
           `
           select id
-          from work_dislikes
+          from public.work_dislikes
           where work_id = $1 and user_id = $2
           limit 1
           `,
           [workId, userId],
         );
         if (existing.rows[0]) {
-          await client.query('delete from work_dislikes where id = $1', [existing.rows[0].id]);
+          await client.query('delete from public.work_dislikes where id = $1', [existing.rows[0].id]);
         } else {
           await client.query('delete from work_likes where work_id = $1 and user_id = $2', [workId, userId]);
           await client.query(
             `
-            insert into work_dislikes (work_id, user_id)
+            insert into public.work_dislikes (work_id, user_id)
             values ($1, $2)
             `,
             [workId, userId],
@@ -1328,7 +1328,7 @@ export function createPostgresRepository(pool) {
         `
         select w.*, ws.code as section_code, wg.slug as genre_slug,
                (select count(*)::int from work_likes wl where wl.work_id = w.id) as likes_count,
-               (select count(*)::int from work_dislikes wd where wd.work_id = w.id) as dislikes_count,
+               (select count(*)::int from public.work_dislikes wd where wd.work_id = w.id) as dislikes_count,
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
@@ -1354,7 +1354,7 @@ export function createPostgresRepository(pool) {
         `
         select w.*, ws.code as section_code, wg.slug as genre_slug,
                (select count(*)::int from work_likes wl where wl.work_id = w.id) as likes_count,
-               (select count(*)::int from work_dislikes wd where wd.work_id = w.id) as dislikes_count,
+               (select count(*)::int from public.work_dislikes wd where wd.work_id = w.id) as dislikes_count,
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
@@ -1379,7 +1379,7 @@ export function createPostgresRepository(pool) {
         `
         select w.*, ws.code as section_code, wg.slug as genre_slug,
                (select count(*)::int from work_likes wl where wl.work_id = w.id) as likes_count,
-               (select count(*)::int from work_dislikes wd where wd.work_id = w.id) as dislikes_count,
+               (select count(*)::int from public.work_dislikes wd where wd.work_id = w.id) as dislikes_count,
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
