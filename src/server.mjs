@@ -2,7 +2,6 @@ import 'dotenv/config';
 
 import { createApolloServer } from './createServer.mjs';
 import { createPool } from './db.mjs';
-import { createMailer } from './email.mjs';
 import { createHttpServer } from './httpServer.mjs';
 import { createPostgresRepository } from './postgresRepository.mjs';
 
@@ -23,15 +22,7 @@ if (!DATABASE_URL) {
 
 const pool = createPool(DATABASE_URL);
 const repo = createPostgresRepository(pool);
-const mailer = createMailer(process.env);
-const frontendBaseUrl = String(process.env.FRONTEND_BASE_URL || process.env.PUBLIC_FRONTEND_URL || '').trim();
-const apolloServer = createApolloServer({
-  repo,
-  jwtSecret: JWT_SECRET,
-  adminUserIds: ADMIN_USER_IDS,
-  mailer,
-  frontendBaseUrl,
-});
+const apolloServer = createApolloServer({ repo, jwtSecret: JWT_SECRET, adminUserIds: ADMIN_USER_IDS });
 await apolloServer.start();
 
 const httpServer = createHttpServer({

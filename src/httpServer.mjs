@@ -24,6 +24,9 @@ const PROFILE_IMAGE_UPLOAD_ENDPOINT = '/api/profile/upload-image';
 const PROFILE_PUBLIC_PATH_PREFIX = '/media/profile/';
 const DISCUSSION_IMAGE_UPLOAD_ENDPOINT = '/api/forum/upload-image';
 const DISCUSSION_PUBLIC_PATH_PREFIX = '/media/forum/';
+const WORK_MEDIA_UPLOAD_ENDPOINT = '/api/works/upload-file';
+const WORK_MEDIA_PUBLIC_PATH_PREFIX = '/media/works/';
+const WORK_MEDIA_FILE_SIZE_LIMIT_BYTES = 25 * 1024 * 1024;
 const IMAGE_FILE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
 const AUDIO_EXTENSION_BY_MIME = {
   'audio/mpeg': '.mp3',
@@ -59,6 +62,12 @@ const IMAGE_CONTENT_TYPE_BY_EXTENSION = {
   '.png': 'image/png',
   '.webp': 'image/webp',
   '.gif': 'image/gif',
+};
+const WORK_MEDIA_EXTENSION_BY_KIND = {
+  pdf: '.pdf',
+};
+const WORK_MEDIA_CONTENT_TYPE_BY_EXTENSION = {
+  '.pdf': 'application/pdf',
 };
 
 function setCorsHeaders(req, res) {
@@ -130,6 +139,11 @@ function resolveProfileStorageDir(env) {
 function resolveDiscussionStorageDir(env) {
   const configured = String(env.DISCUSSION_UPLOAD_DIR || env.FORUM_UPLOAD_DIR || '').trim();
   return configured ? resolve(configured) : resolve(process.cwd(), 'uploads', 'forum');
+}
+
+function resolveWorkMediaStorageDir(env) {
+  const configured = String(env.WORK_MEDIA_UPLOAD_DIR || '').trim();
+  return configured ? resolve(configured) : resolve(process.cwd(), 'uploads', 'works');
 }
 
 function sanitizeStoredBaseName(filename) {
@@ -212,6 +226,55 @@ function decodeBase64Image(rawValue) {
   }
   if (buffer.length > IMAGE_FILE_SIZE_LIMIT_BYTES) {
     throw new Error('Изображение слишком большое. Максимум 10 МБ.');
+  }
+  return buffer;
+}
+
+function normalizeWorkMediaKind(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'pdf' || normalized === 'audio') {
+    return normalized;
+  }
+  throw new Error('kind must be pdf or audio');
+}
+
+function detectWorkMediaExtension({ kind, mimeType, fileName }) {
+  if (kind === 'audio') {
+    return detectAudioExtension({ mimeType, fileName });
+  }
+
+  const normalizedMimeType = String(mimeType || '').trim().toLowerCase();
+  if (normalizedMimeType === 'application/pdf') {
+    return '.pdf';
+  }
+
+  const normalizedExtension = extname(String(fileName || '').trim()).toLowerCase();
+  if (WORK_MEDIA_CONTENT_TYPE_BY_EXTENSION[normalizedExtension]) {
+    return normalizedExtension;
+  }
+
+  throw new Error('Поддерживаются только PDF-файлы.');
+}
+
+function decodeBase64WorkMedia(rawValue, kind) {
+  const normalized = String(rawValue || '')
+    .replace(/^data:[^;]+;base64,/i, '')
+    .replace(/\s+/g, '');
+
+  if (!normalized) {
+    throw new Error(kind === 'audio' ? 'Аудиофайл не передан.' : 'PDF-файл не передан.');
+  }
+
+  if (!/^[A-Za-z0-9+/]+=*$/.test(normalized) || normalized.length % 4 !== 0) {
+    throw new Error(kind === 'audio' ? 'Некорректный формат аудиофайла.' : 'Некорректный формат PDF-файла.');
+  }
+
+  const buffer = Buffer.from(normalized, 'base64');
+  if (!buffer.length) {
+    throw new Error(kind === 'audio' ? 'Аудиофайл пустой.' : 'PDF-файл пустой.');
+  }
+  if (buffer.length > WORK_MEDIA_FILE_SIZE_LIMIT_BYTES) {
+    throw new Error('Файл слишком большой. Максимум 25 МБ.');
   }
   return buffer;
 }
@@ -494,6 +557,58 @@ async function handleProfileImageUploadRequest({ req, res, pathname, repo, jwtSe
   return true;
 }
 
+async function handleWorkMediaUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env }) {
+  if (pathname !== WORK_MEDIA_UPLOAD_ENDPOINT) {
+    return false;
+  }
+
+  if (req.method !== 'POST') {
+    sendText(res, 405, 'Method not allowed');
+    return true;
+  }
+
+  const context = await buildContext({ req }, { repo, jwtSecret, adminUserIds });
+  if (!context.currentUser) {
+    sendJson(res, 401, { error: 'Authentication required' });
+    return true;
+  }
+
+  const body = await readJsonBody(req);
+
+  try {
+    const kind = normalizeWorkMediaKind(body?.kind);
+    const fileBuffer = decodeBase64WorkMedia(body?.contentBase64, kind);
+    const fileExtension = detectWorkMediaExtension({
+      kind,
+      mimeType: body?.mimeType,
+      fileName: body?.fileName,
+    });
+    const storageDir = kind === 'audio' ? resolveAudioStorageDir(env) : resolveWorkMediaStorageDir(env);
+    await mkdir(storageDir, { recursive: true });
+
+    const kindPrefix = kind === 'audio' ? 'work-audio' : 'work-pdf';
+    const storedFileName = `${kindPrefix}-${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
+    const storagePath = join(storageDir, storedFileName);
+    await writeFile(storagePath, fileBuffer);
+
+    const publicPrefix = kind === 'audio' ? AUDIO_PUBLIC_PATH_PREFIX : WORK_MEDIA_PUBLIC_PATH_PREFIX;
+    const publicUrl = `${resolvePublicBaseUrl(req, env)}${publicPrefix}${storedFileName}`;
+    sendJson(res, 201, {
+      ok: true,
+      kind,
+      storedFileName,
+      fileName: String(body?.fileName || '').trim() || storedFileName,
+      url: publicUrl,
+    });
+  } catch (error) {
+    sendJson(res, 400, {
+      error: error instanceof Error ? error.message : 'Не удалось загрузить файл произведения.',
+    });
+  }
+
+  return true;
+}
+
 async function handleAudioFileRequest({ req, res, pathname, env }) {
   if (!pathname.startsWith(AUDIO_PUBLIC_PATH_PREFIX)) {
     return false;
@@ -587,6 +702,37 @@ async function handleProfileImageFileRequest({ req, res, pathname, env }) {
   return true;
 }
 
+async function handleWorkMediaFileRequest({ req, res, pathname, env }) {
+  if (!pathname.startsWith(WORK_MEDIA_PUBLIC_PATH_PREFIX)) {
+    return false;
+  }
+
+  if (req.method !== 'GET') {
+    sendText(res, 405, 'Method not allowed');
+    return true;
+  }
+
+  const requestedFileName = decodeURIComponent(pathname.slice(WORK_MEDIA_PUBLIC_PATH_PREFIX.length));
+  if (!requestedFileName || requestedFileName.includes('/') || requestedFileName.includes('..')) {
+    sendJson(res, 400, { error: 'Invalid file path' });
+    return true;
+  }
+
+  const storagePath = join(resolveWorkMediaStorageDir(env), requestedFileName);
+
+  try {
+    const fileStat = await stat(storagePath);
+    res.statusCode = 200;
+    res.setHeader('content-type', WORK_MEDIA_CONTENT_TYPE_BY_EXTENSION[extname(requestedFileName).toLowerCase()] || 'application/octet-stream');
+    res.setHeader('content-length', String(fileStat.size));
+    createReadStream(storagePath).pipe(res);
+  } catch {
+    sendJson(res, 404, { error: 'Work media file not found' });
+  }
+
+  return true;
+}
+
 export function createHttpServer({ apolloServer, repo, jwtSecret, adminUserIds = new Set(), env = process.env, fetchImpl = globalThis.fetch }) {
   apolloServer.assertStarted('createHttpServer');
 
@@ -619,6 +765,10 @@ export function createHttpServer({ apolloServer, repo, jwtSecret, adminUserIds =
         return;
       }
 
+      if (await handleWorkMediaUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env })) {
+        return;
+      }
+
       if (await handleAudioFileRequest({ req, res, pathname, env })) {
         return;
       }
@@ -628,6 +778,10 @@ export function createHttpServer({ apolloServer, repo, jwtSecret, adminUserIds =
       }
 
       if (await handleProfileImageFileRequest({ req, res, pathname, env })) {
+        return;
+      }
+
+      if (await handleWorkMediaFileRequest({ req, res, pathname, env })) {
         return;
       }
 

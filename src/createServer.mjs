@@ -2,15 +2,8 @@ import { ApolloServer } from '@apollo/server';
 import { GraphQLError } from 'graphql';
 
 import { decodeToken, getCurrentUserFromHeader, hashPassword, issueToken, verifyPassword } from './auth.mjs';
-import {
-  buildPasswordResetToken,
-  buildPasswordResetUrl,
-  isValidEmail,
-  matchesPasswordResetToken,
-  normalizeEmail,
-  validatePassword,
-  verifyPasswordResetToken,
-} from './email.mjs';
+
+const CURRENT_TERMS_VERSION = '2026-06-28';
 
 const typeDefs = `#graphql
   type Health {
@@ -79,12 +72,17 @@ const typeDefs = `#graphql
     sectionCode: String!
     genreSlug: String
     projectFormat: String
+    pdfUrl: String
+    pdfFileName: String
+    audioUrl: String
+    audioFileName: String
     commentsCount: Int!
     ratingsCount: Int!
     averageRating: Float!
     likesCount: Int!
+    dislikesCount: Int!
     likedByMe: Boolean!
-    announcementActive: Boolean!
+    dislikedByMe: Boolean!
     publishedAt: String
     createdAt: String!
     updatedAt: String!
@@ -137,19 +135,6 @@ const typeDefs = `#graphql
     lockedViews: Int!
     batchSize: Int!
     visitors: [PageVisitor!]!
-  }
-
-  type AuthorReviewFeedItem {
-    id: ID!
-    body: String!
-    status: String!
-    createdAt: String!
-    updatedAt: String!
-    workId: ID!
-    workTitle: String!
-    workSlug: String
-    commentAuthor: Author
-    workAuthor: Author
   }
 
   type ForumSection {
@@ -239,12 +224,14 @@ const typeDefs = `#graphql
 
   input RegisterInput {
     email: String!
+    login: String!
     password: String!
     displayName: String!
+    acceptTerms: Boolean!
   }
 
   input LoginInput {
-    email: String!
+    identifier: String!
     password: String!
   }
 
@@ -257,6 +244,10 @@ const typeDefs = `#graphql
     excerpt: String
     status: String = "published"
     projectFormat: String
+    pdfUrl: String
+    pdfFileName: String
+    audioUrl: String
+    audioFileName: String
   }
 
   input UpdateWorkInput {
@@ -268,6 +259,10 @@ const typeDefs = `#graphql
     excerpt: String
     status: String = "published"
     projectFormat: String
+    pdfUrl: String
+    pdfFileName: String
+    audioUrl: String
+    audioFileName: String
   }
 
   input CreateForumTopicInput {
@@ -298,7 +293,6 @@ const typeDefs = `#graphql
     onlineAuthors(limit: Int = 12): [Author!]!
     author(id: ID, login: String): Author
     works(limit: Int = 20, offset: Int = 0, sectionCode: String, genreSlug: String, authorId: ID, search: String, status: String = "published"): [Work!]!
-    announcedWorks(limit: Int = 12): [Work!]!
     work(id: ID, slug: String): Work
     workComments(workId: ID!, limit: Int = 50, offset: Int = 0): [WorkComment!]!
     workViewers(workId: ID!, limit: Int = 100): [WorkViewer!]!
@@ -306,8 +300,6 @@ const typeDefs = `#graphql
     authorPageVisitors(workId: ID!, limit: Int = 100): PageVisitorLedger!
     workLikers(workId: ID!, limit: Int = 100): [Author!]!
     workCommentLikers(commentId: ID!, limit: Int = 100): [Author!]!
-    authorWrittenWorkComments(authorId: ID!, limit: Int = 50): [AuthorReviewFeedItem!]!
-    authorReceivedWorkComments(authorId: ID!, limit: Int = 50): [AuthorReviewFeedItem!]!
     forumSections: [ForumSection!]!
     forumTopics(sectionSlug: String, tag: String, limit: Int = 20, offset: Int = 0): [ForumTopic!]!
     forumTopic(id: ID, slug: String): ForumTopic
@@ -318,16 +310,14 @@ const typeDefs = `#graphql
   type Mutation {
     register(input: RegisterInput!): AuthPayload!
     login(input: LoginInput!): AuthPayload!
-    requestPasswordReset(email: String!): Boolean!
-    resetPassword(token: String!, password: String!): AuthPayload!
     touchPresence: User!
     updateMyProfile(input: UpdateMyProfileInput!): User!
     closeMyAccount: Boolean!
     createWork(input: CreateWorkInput!): Work!
     updateWork(workId: ID!, input: UpdateWorkInput!): Work!
     deleteWork(workId: ID!): Work!
-    activateWorkAnnouncement(workId: ID!): Work!
     toggleWorkLike(workId: ID!): Work!
+    toggleWorkDislike(workId: ID!): Work!
     rateWork(workId: ID!, rating: Int!): WorkRating!
     addWorkComment(workId: ID!, body: String!, parentCommentId: ID, imageUrl: String): WorkComment!
     updateWorkComment(commentId: ID!, body: String!, imageUrl: String): WorkComment!
@@ -377,39 +367,7 @@ function resolveOnlineFlag(entity) {
   return Date.now() - timestamp <= ONLINE_WINDOW_MS;
 }
 
-function badUserInput(message) {
-  return new GraphQLError(message, {
-    extensions: { code: 'BAD_USER_INPUT' },
-  });
-}
-
-function normalizeRequiredEmail(rawValue) {
-  const email = normalizeEmail(rawValue);
-  if (!isValidEmail(email)) {
-    throw badUserInput('Введите корректный email.');
-  }
-  return email;
-}
-
-function normalizeRequiredPassword(rawValue) {
-  const password = String(rawValue ?? '');
-  const validationMessage = validatePassword(password);
-  if (validationMessage) {
-    throw badUserInput(validationMessage);
-  }
-  return password;
-}
-
-function normalizeRequiredDisplayName(rawValue) {
-  const displayName = typeof rawValue === 'string' ? rawValue.trim() : '';
-  if (!displayName) {
-    throw badUserInput('Display name is required');
-  }
-  return displayName;
-}
-
-function createResolvers({ mailer = { enabled: false }, frontendBaseUrl = '' } = {}) {
-  return {
+const resolvers = {
   Query: {
     health: async (_, __, { repo }) => ({ status: 'ok', ok: true, database: await repo.ping() }),
     me: async (_, __, { currentUser }) => currentUser ?? null,
@@ -417,7 +375,6 @@ function createResolvers({ mailer = { enabled: false }, frontendBaseUrl = '' } =
     onlineAuthors: async (_, args, { repo }) => repo.listOnlineAuthors(args),
     author: async (_, args, { repo }) => repo.getAuthor(args),
     works: async (_, args, { repo }) => repo.listWorks(args),
-    announcedWorks: async (_, args, { repo }) => repo.listAnnouncedWorks(args),
     work: async (_, args, { repo, currentUser }) => {
       const work = args.id
         ? await repo.getWorkById(args.id)
@@ -445,8 +402,6 @@ function createResolvers({ mailer = { enabled: false }, frontendBaseUrl = '' } =
     authorPageVisitors: async (_, args, { repo }) => repo.listAuthorPageVisitorsByWork(args),
     workLikers: async (_, args, { repo }) => repo.listWorkLikers(args),
     workCommentLikers: async (_, args, { repo }) => repo.listWorkCommentLikers(args),
-    authorWrittenWorkComments: async (_, args, { repo }) => repo.listWrittenWorkComments({ authorUserId: args.authorId, limit: args.limit }),
-    authorReceivedWorkComments: async (_, args, { repo }) => repo.listReceivedWorkComments({ authorUserId: args.authorId, limit: args.limit }),
     forumSections: async (_, __, { repo }) => repo.listForumSections(),
     forumTopics: async (_, args, { repo }) => repo.listForumTopics(args),
     forumTopic: async (_, args, { repo }) => repo.getForumTopic(args),
@@ -455,41 +410,29 @@ function createResolvers({ mailer = { enabled: false }, frontendBaseUrl = '' } =
   },
   Mutation: {
     register: async (_, { input }, { repo, jwtSecret }) => {
-      if (!mailer?.enabled) {
-        throw new GraphQLError('Почтовая отправка не настроена на сервере.', {
-          extensions: { code: 'FAILED_PRECONDITION' },
+      if (!input.acceptTerms) {
+        throw new GraphQLError('Нужно принять Пользовательское соглашение.', {
+          extensions: { code: 'BAD_USER_INPUT' },
         });
       }
-
-      const email = normalizeRequiredEmail(input.email);
-      const password = normalizeRequiredPassword(input.password);
-      const displayName = normalizeRequiredDisplayName(input.displayName);
-      const existing = await (repo.getUserByEmail?.(email) ?? repo.findUserByEmailOrLogin(email, ''));
+      const existing = await repo.findUserByEmailOrLogin(input.email, input.login);
       if (existing) {
-        throw new GraphQLError('User with this email already exists', {
+        throw new GraphQLError('User with this email or login already exists', {
           extensions: { code: 'CONFLICT' },
         });
       }
-
-      const passwordHash = await hashPassword(password);
-      const user = await repo.createUser({ email, passwordHash, displayName });
-
-      try {
-        await mailer.sendWelcomeEmail({
-          to: email,
-          displayName,
-          appUrl: frontendBaseUrl,
-        });
-      } catch (error) {
-        console.error('Failed to send welcome email', error);
-      }
-
+      const passwordHash = await hashPassword(input.password);
+      const user = await repo.createUser({
+        ...input,
+        passwordHash,
+        termsAcceptedAt: new Date(),
+        termsVersion: CURRENT_TERMS_VERSION,
+      });
       const token = issueToken(user, jwtSecret);
       return { token, user };
     },
     login: async (_, { input }, { repo, jwtSecret }) => {
-      const email = normalizeRequiredEmail(input.email);
-      const user = await (repo.getUserByEmail?.(email) ?? repo.getUserByIdentifier(email));
+      const user = await repo.getUserByIdentifier(input.identifier);
       if (!user || !(await verifyPassword(input.password, user.passwordHash))) {
         throw new GraphQLError('Invalid credentials', {
           extensions: { code: 'UNAUTHENTICATED' },
@@ -498,58 +441,18 @@ function createResolvers({ mailer = { enabled: false }, frontendBaseUrl = '' } =
       const token = issueToken(user, jwtSecret);
       return { token, user };
     },
-    requestPasswordReset: async (_, { email }, { repo, jwtSecret }) => {
-      if (!mailer?.enabled) {
-        throw new GraphQLError('Почтовая отправка не настроена на сервере.', {
-          extensions: { code: 'FAILED_PRECONDITION' },
-        });
-      }
-
-      const normalizedEmail = normalizeRequiredEmail(email);
-      const user = await (repo.getUserByEmail?.(normalizedEmail) ?? repo.getUserByIdentifier(normalizedEmail));
-      if (!user) {
-        return true;
-      }
-
-      const token = buildPasswordResetToken(user, jwtSecret);
-      const resetUrl = buildPasswordResetUrl(frontendBaseUrl, token);
-      await mailer.sendPasswordResetEmail({
-        to: normalizedEmail,
-        displayName: user.profile?.displayName || user.login || 'Автор',
-        resetUrl,
-      });
-      return true;
-    },
-    resetPassword: async (_, { token, password }, { repo, jwtSecret }) => {
-      let payload;
-      try {
-        payload = verifyPasswordResetToken(token, jwtSecret);
-      } catch {
-        throw new GraphQLError('Ссылка восстановления недействительна или истекла.', {
-          extensions: { code: 'UNAUTHENTICATED' },
-        });
-      }
-
-      const user = await repo.getUserById(payload.sub);
-      if (!user || !matchesPasswordResetToken(user, payload)) {
-        throw new GraphQLError('Ссылка восстановления недействительна или истекла.', {
-          extensions: { code: 'UNAUTHENTICATED' },
-        });
-      }
-
-      const nextPassword = normalizeRequiredPassword(password);
-      const passwordHash = await hashPassword(nextPassword);
-      const updatedUser = await repo.updateUserPassword({ userId: user.id, passwordHash });
-      const authToken = issueToken(updatedUser, jwtSecret);
-      return { token: authToken, user: updatedUser };
-    },
     touchPresence: async (_, __, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
       return applyAdminAccess(await repo.touchUserPresence(user.id), adminUserIds);
     },
     updateMyProfile: async (_, { input }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
-      const displayName = normalizeRequiredDisplayName(input.displayName);
+      const displayName = typeof input.displayName === 'string' ? input.displayName.trim() : '';
+      if (!displayName) {
+        throw new GraphQLError('Display name is required', {
+          extensions: { code: 'BAD_USER_INPUT' },
+        });
+      }
       return repo.updateUserProfile({
         userId: user.id,
         displayName,
@@ -576,18 +479,13 @@ function createResolvers({ mailer = { enabled: false }, frontendBaseUrl = '' } =
       const user = requireAuth(currentUser);
       return repo.softDeleteWork({ workId, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds) });
     },
-    activateWorkAnnouncement: async (_, { workId }, { currentUser, repo, adminUserIds }) => {
-      const user = requireAuth(currentUser);
-      if (!isAdminUser(user, adminUserIds)) {
-        throw new GraphQLError('Only admin can add works to announcements', {
-          extensions: { code: 'FORBIDDEN' },
-        });
-      }
-      return repo.activateWorkAnnouncement({ workId, activatedByUserId: user.id });
-    },
     toggleWorkLike: async (_, { workId }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
       return repo.toggleWorkLike({ workId, userId: user.id });
+    },
+    toggleWorkDislike: async (_, { workId }, { currentUser, repo }) => {
+      const user = requireAuth(currentUser);
+      return repo.toggleWorkDislike({ workId, userId: user.id });
     },
     rateWork: async (_, { workId, rating }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
@@ -647,9 +545,9 @@ function createResolvers({ mailer = { enabled: false }, frontendBaseUrl = '' } =
       if (!currentUser?.id) return false;
       return repo.hasUserLikedWork({ workId: parent.id, userId: currentUser.id });
     },
-    announcementActive: async (parent, _, { repo }) => {
-      if (typeof parent?.announcementActive === 'boolean') return parent.announcementActive;
-      return repo.hasWorkAnnouncement({ workId: parent.id });
+    dislikedByMe: async (parent, _, { repo, currentUser }) => {
+      if (!currentUser?.id) return false;
+      return repo.hasUserDislikedWork({ workId: parent.id, userId: currentUser.id });
     },
   },
   WorkComment: {
@@ -666,13 +564,12 @@ function createResolvers({ mailer = { enabled: false }, frontendBaseUrl = '' } =
   ForumPost: {
     author: async (parent, _, { repo }) => parent.author ?? repo.getAuthorByUserId(parent.userId),
   },
-  };
-}
+};
 
-export function createApolloServer({ repo, jwtSecret, adminUserIds = new Set(), mailer = { enabled: false }, frontendBaseUrl = '' }) {
+export function createApolloServer({ repo, jwtSecret, adminUserIds = new Set() }) {
   return new ApolloServer({
     typeDefs,
-    resolvers: createResolvers({ mailer, frontendBaseUrl }),
+    resolvers,
     introspection: true,
   });
 }
