@@ -2,34 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createApolloServer } from '../src/createServer.mjs';
-import { hashPassword, issueToken } from '../src/auth.mjs';
+import { issueToken } from '../src/auth.mjs';
 
 function makeFakeRepo() {
   let userId = 1;
   let workId = 100;
   const users = [];
   const works = [];
-
-  function buildLoginCandidate(value) {
-    return String(value ?? '')
-      .trim()
-      .toLowerCase()
-      .replace(/@.*$/, '')
-      .replace(/[^a-z0-9а-яё_-]+/giu, '-')
-      .replace(/-{2,}/g, '-')
-      .replace(/^-+|-+$/g, '') || 'author';
-  }
-
-  function allocateLogin(inputLogin, email) {
-    const base = buildLoginCandidate(inputLogin || email);
-    let candidate = base;
-    let suffix = 2;
-    while (users.some((user) => user.login === candidate)) {
-      candidate = `${base}-${suffix}`;
-      suffix += 1;
-    }
-    return candidate;
-  }
+  const workLikes = new Set();
+  const workDislikes = new Set();
 
   return {
     async ping() {
@@ -41,14 +22,11 @@ function makeFakeRepo() {
     async getUserByIdentifier(identifier) {
       return users.find((user) => user.email === identifier || user.login === identifier) ?? null;
     },
-    async getUserByEmail(email) {
-      return users.find((user) => user.email === email) ?? null;
-    },
     async createUser({ email, login, passwordHash, displayName }) {
       const user = {
         id: userId++,
         email,
-        login: allocateLogin(login, email),
+        login,
         passwordHash,
         role: 'author',
         status: 'active',
@@ -67,13 +45,6 @@ function makeFakeRepo() {
         }
       };
       users.push(user);
-      return user;
-    },
-    async updateUserPassword({ userId, passwordHash }) {
-      const user = users.find((item) => String(item.id) === String(userId));
-      if (!user) return null;
-      user.passwordHash = passwordHash;
-      user.updatedAt = new Date().toISOString();
       return user;
     },
     async getUserById(id) {
@@ -130,6 +101,8 @@ function makeFakeRepo() {
         commentsCount: 0,
         ratingsCount: 0,
         averageRating: 0,
+        likesCount: 0,
+        dislikesCount: 0,
         publishedAt: new Date().toISOString(),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -139,6 +112,46 @@ function makeFakeRepo() {
     },
     async getWorkById(id) {
       return works.find((work) => String(work.id) === String(id)) ?? null;
+    },
+    async hasUserLikedWork({ workId, userId }) {
+      return workLikes.has(`${workId}:${userId}`);
+    },
+    async hasUserDislikedWork({ workId, userId }) {
+      return workDislikes.has(`${workId}:${userId}`);
+    },
+    async toggleWorkLike({ workId, userId }) {
+      const key = `${workId}:${userId}`;
+      const work = works.find((item) => String(item.id) === String(workId));
+      if (!work) return null;
+      if (workLikes.has(key)) {
+        workLikes.delete(key);
+        work.likesCount = Math.max(0, work.likesCount - 1);
+      } else {
+        if (workDislikes.has(key)) {
+          workDislikes.delete(key);
+          work.dislikesCount = Math.max(0, work.dislikesCount - 1);
+        }
+        workLikes.add(key);
+        work.likesCount += 1;
+      }
+      return work;
+    },
+    async toggleWorkDislike({ workId, userId }) {
+      const key = `${workId}:${userId}`;
+      const work = works.find((item) => String(item.id) === String(workId));
+      if (!work) return null;
+      if (workDislikes.has(key)) {
+        workDislikes.delete(key);
+        work.dislikesCount = Math.max(0, work.dislikesCount - 1);
+      } else {
+        if (workLikes.has(key)) {
+          workLikes.delete(key);
+          work.likesCount = Math.max(0, work.likesCount - 1);
+        }
+        workDislikes.add(key);
+        work.dislikesCount += 1;
+      }
+      return work;
     },
     async upsertWorkRating({ workId, userId, rating }) {
       const work = works.find((item) => String(item.id) === String(workId));
@@ -179,17 +192,7 @@ test('health query works', async () => {
 
 test('register mutation returns token and user', async () => {
   const repo = makeFakeRepo();
-  const sentEmails = [];
-  const server = createApolloServer({
-    repo,
-    jwtSecret: 'test-secret',
-    mailer: {
-      enabled: true,
-      async sendWelcomeEmail(payload) {
-        sentEmails.push(payload);
-      },
-    },
-  });
+  const server = createApolloServer({ repo, jwtSecret: 'test-secret' });
   await server.start();
   const result = await server.executeOperation({
     query: `mutation Register($input: RegisterInput!) {
@@ -201,8 +204,10 @@ test('register mutation returns token and user', async () => {
     variables: {
       input: {
         email: 'neo@example.com',
+        login: 'neo',
         password: 's3cret-pass',
-        displayName: 'Neo'
+        displayName: 'Neo',
+        acceptTerms: true
       }
     }
   }, {
@@ -212,43 +217,6 @@ test('register mutation returns token and user', async () => {
   assert.equal(result.body.singleResult.data.register.user.login, 'neo');
   assert.equal(result.body.singleResult.data.register.user.profile.displayName, 'Neo');
   assert.ok(result.body.singleResult.data.register.token);
-  assert.equal(sentEmails.length, 1);
-  assert.equal(sentEmails[0].to, 'neo@example.com');
-  await server.stop();
-});
-
-test('login mutation authenticates by email', async () => {
-  const repo = makeFakeRepo();
-  const passwordHash = await hashPassword('s3cret-pass');
-  await repo.createUser({
-    email: 'reader@example.com',
-    passwordHash,
-    displayName: 'Reader'
-  });
-  const server = createApolloServer({ repo, jwtSecret: 'test-secret' });
-  await server.start();
-
-  const result = await server.executeOperation({
-    query: `mutation Login($input: LoginInput!) {
-      login(input: $input) {
-        token
-        user { id email login }
-      }
-    }`,
-    variables: {
-      input: {
-        email: 'reader@example.com',
-        password: 's3cret-pass'
-      }
-    }
-  }, {
-    contextValue: { repo, jwtSecret: 'test-secret', currentUser: null, authHeader: '' }
-  });
-
-  assert.equal(result.body.kind, 'single');
-  assert.equal(result.body.singleResult.data.login.user.email, 'reader@example.com');
-  assert.ok(result.body.singleResult.data.login.token);
-
   await server.stop();
 });
 

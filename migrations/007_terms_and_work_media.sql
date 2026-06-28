@@ -1,0 +1,9 @@
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS terms_version TEXT;
+
+ALTER TABLE works
+    ADD COLUMN IF NOT EXISTS pdf_url TEXT,
+    ADD COLUMN IF NOT EXISTS pdf_file_name TEXT,
+    ADD COLUMN IF NOT EXISTS audio_url TEXT,
+    ADD COLUMN IF NOT EXISTS audio_file_name TEXT;
