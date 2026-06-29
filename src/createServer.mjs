@@ -84,6 +84,7 @@ const typeDefs = `#graphql
     dislikesCount: Int!
     likedByMe: Boolean!
     dislikedByMe: Boolean!
+    announcementActive: Boolean!
     publishedAt: String
     createdAt: String!
     updatedAt: String!
@@ -136,6 +137,19 @@ const typeDefs = `#graphql
     lockedViews: Int!
     batchSize: Int!
     visitors: [PageVisitor!]!
+  }
+
+  type AuthorReviewFeedItem {
+    id: ID!
+    body: String!
+    status: String!
+    createdAt: String!
+    updatedAt: String!
+    workId: ID!
+    workTitle: String!
+    workSlug: String
+    commentAuthor: Author
+    workAuthor: Author
   }
 
   type ForumSection {
@@ -294,6 +308,7 @@ const typeDefs = `#graphql
     onlineAuthors(limit: Int = 12): [Author!]!
     author(id: ID, login: String): Author
     works(limit: Int = 20, offset: Int = 0, sectionCode: String, genreSlug: String, authorId: ID, search: String, status: String = "published"): [Work!]!
+    announcedWorks(limit: Int = 12): [Work!]!
     work(id: ID, slug: String): Work
     workComments(workId: ID!, limit: Int = 50, offset: Int = 0): [WorkComment!]!
     workViewers(workId: ID!, limit: Int = 100): [WorkViewer!]!
@@ -301,6 +316,8 @@ const typeDefs = `#graphql
     authorPageVisitors(workId: ID!, limit: Int = 100): PageVisitorLedger!
     workLikers(workId: ID!, limit: Int = 100): [Author!]!
     workCommentLikers(commentId: ID!, limit: Int = 100): [Author!]!
+    authorWrittenWorkComments(authorId: ID!, limit: Int = 50): [AuthorReviewFeedItem!]!
+    authorReceivedWorkComments(authorId: ID!, limit: Int = 50): [AuthorReviewFeedItem!]!
     forumSections: [ForumSection!]!
     forumTopics(sectionSlug: String, tag: String, limit: Int = 20, offset: Int = 0): [ForumTopic!]!
     forumTopic(id: ID, slug: String): ForumTopic
@@ -319,6 +336,7 @@ const typeDefs = `#graphql
     createWork(input: CreateWorkInput!): Work!
     updateWork(workId: ID!, input: UpdateWorkInput!): Work!
     deleteWork(workId: ID!): Work!
+    activateWorkAnnouncement(workId: ID!): Work!
     toggleWorkLike(workId: ID!): Work!
     toggleWorkDislike(workId: ID!): Work!
     rateWork(workId: ID!, rating: Int!): WorkRating!
@@ -429,6 +447,7 @@ const resolvers = {
     onlineAuthors: async (_, args, { repo }) => repo.listOnlineAuthors(args),
     author: async (_, args, { repo }) => repo.getAuthor(args),
     works: async (_, args, { repo }) => repo.listWorks(args),
+    announcedWorks: async (_, args, { repo }) => repo.listAnnouncedWorks(args),
     work: async (_, args, { repo, currentUser }) => {
       const work = args.id
         ? await repo.getWorkById(args.id)
@@ -456,6 +475,8 @@ const resolvers = {
     authorPageVisitors: async (_, args, { repo }) => repo.listAuthorPageVisitorsByWork(args),
     workLikers: async (_, args, { repo }) => repo.listWorkLikers(args),
     workCommentLikers: async (_, args, { repo }) => repo.listWorkCommentLikers(args),
+    authorWrittenWorkComments: async (_, args, { repo }) => repo.listWrittenWorkComments({ authorUserId: args.authorId, limit: args.limit }),
+    authorReceivedWorkComments: async (_, args, { repo }) => repo.listReceivedWorkComments({ authorUserId: args.authorId, limit: args.limit }),
     forumSections: async (_, __, { repo }) => repo.listForumSections(),
     forumTopics: async (_, args, { repo }) => repo.listForumTopics(args),
     forumTopic: async (_, args, { repo }) => repo.getForumTopic(args),
@@ -596,6 +617,15 @@ const resolvers = {
       const user = requireAuth(currentUser);
       return repo.softDeleteWork({ workId, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds) });
     },
+    activateWorkAnnouncement: async (_, { workId }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      if (!isAdminUser(user, adminUserIds)) {
+        throw new GraphQLError('Only admin can add works to announcements', {
+          extensions: { code: 'FORBIDDEN' },
+        });
+      }
+      return repo.activateWorkAnnouncement({ workId, activatedByUserId: user.id });
+    },
     toggleWorkLike: async (_, { workId }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
       return repo.toggleWorkLike({ workId, userId: user.id });
@@ -665,6 +695,10 @@ const resolvers = {
     dislikedByMe: async (parent, _, { repo, currentUser }) => {
       if (!currentUser?.id) return false;
       return repo.hasUserDislikedWork({ workId: parent.id, userId: currentUser.id });
+    },
+    announcementActive: async (parent, _, { repo }) => {
+      if (typeof parent?.announcementActive === 'boolean') return parent.announcementActive;
+      return repo.hasWorkAnnouncement({ workId: parent.id });
     },
   },
   WorkComment: {
