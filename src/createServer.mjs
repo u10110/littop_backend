@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken';
 import { decodeToken, getCurrentUserFromHeader, hashPassword, issueToken, verifyPassword } from './auth.mjs';
 
 const CURRENT_TERMS_VERSION = '2026-06-28';
+const ACCOUNT_REOPEN_WINDOW_MS = 365 * 24 * 60 * 60 * 1000;
 
 const typeDefs = `#graphql
   type Health {
@@ -20,6 +21,7 @@ const typeDefs = `#graphql
     coverImageUrl: String
     city: String
     websiteUrl: String
+    birthDate: String
     ratingTotal: Float!
     worksCountCached: Int!
     isClassic: Boolean!
@@ -35,6 +37,7 @@ const typeDefs = `#graphql
     registeredAt: String!
     lastLoginAt: String
     lastSeenAt: String
+    deletedAt: String
     isOnline: Boolean!
     createdAt: String!
     updatedAt: String!
@@ -51,12 +54,14 @@ const typeDefs = `#graphql
     coverImageUrl: String
     city: String
     websiteUrl: String
+    birthDate: String
     ratingTotal: Float!
     worksCountCached: Int!
     isClassic: Boolean!
     isFeatured: Boolean!
     registeredAt: String!
     lastSeenAt: String
+    deletedAt: String
     isOnline: Boolean!
     createdAt: String!
     updatedAt: String!
@@ -194,6 +199,27 @@ const typeDefs = `#graphql
     author: Author
   }
 
+  type PrivateDialog {
+    peerUserId: ID!
+    lastMessageBody: String!
+    lastMessageAt: String!
+    unreadCount: Int!
+    peer: Author!
+  }
+
+  type PrivateMessage {
+    id: ID!
+    senderUserId: ID!
+    recipientUserId: ID!
+    body: String!
+    status: String!
+    createdAt: String!
+    updatedAt: String!
+    readAt: String
+    sender: Author!
+    recipient: Author!
+  }
+
   type WorkViewer {
     id: ID!
     workId: ID!
@@ -293,6 +319,7 @@ const typeDefs = `#graphql
     coverImageUrl: String
     city: String
     websiteUrl: String
+    birthDate: String
   }
 
   input UpdateForumTopicInput {
@@ -306,6 +333,8 @@ const typeDefs = `#graphql
     me: User
     authors(limit: Int = 20, offset: Int = 0, search: String, classicsOnly: Boolean = false, featuredOnly: Boolean = false): [Author!]!
     onlineAuthors(limit: Int = 12): [Author!]!
+    todayVisitors(limit: Int = 12): [Author!]!
+    birthdayAuthors(limit: Int = 12): [Author!]!
     author(id: ID, login: String): Author
     works(limit: Int = 20, offset: Int = 0, sectionCode: String, genreSlug: String, authorId: ID, search: String, status: String = "published"): [Work!]!
     announcedWorks(limit: Int = 12): [Work!]!
@@ -321,6 +350,8 @@ const typeDefs = `#graphql
     forumSections: [ForumSection!]!
     forumTopics(sectionSlug: String, tag: String, limit: Int = 20, offset: Int = 0): [ForumTopic!]!
     forumTopic(id: ID, slug: String): ForumTopic
+    privateDialogs(limit: Int = 50): [PrivateDialog!]!
+    privateMessages(withUserId: ID, withLogin: String, limit: Int = 100): [PrivateMessage!]!
     contests(status: String, scope: String, limit: Int = 20, offset: Int = 0): [Contest!]!
     radioTracks(limit: Int = 20, offset: Int = 0): [RadioTrack!]!
   }
@@ -330,6 +361,7 @@ const typeDefs = `#graphql
     login(input: LoginInput!): AuthPayload!
     requestPasswordReset(email: String!): Boolean!
     resetPassword(token: String!, password: String!): AuthPayload!
+    reopenClosedAccount(input: LoginInput!): AuthPayload!
     touchPresence: User!
     updateMyProfile(input: UpdateMyProfileInput!): User!
     closeMyAccount: Boolean!
@@ -347,9 +379,12 @@ const typeDefs = `#graphql
     createForumTopic(input: CreateForumTopicInput!): ForumTopic!
     updateForumTopic(topicId: ID!, input: UpdateForumTopicInput!): ForumTopic!
     deleteForumTopic(topicId: ID!): ForumTopic!
+    incrementForumTopicViews(topicId: ID!): ForumTopic!
     createForumPost(topicId: ID!, body: String!, parentPostId: ID, imageUrl: String): ForumPost!
     updateForumPost(postId: ID!, body: String!, imageUrl: String): ForumPost!
     deleteForumPost(postId: ID!): ForumPost!
+    sendPrivateMessage(recipientUserId: ID, recipientLogin: String, body: String!): PrivateMessage!
+    markPrivateMessagesRead(withUserId: ID, withLogin: String): Int!
   }
 `;
 
@@ -387,6 +422,19 @@ function resolveOnlineFlag(entity) {
     return false;
   }
   return Date.now() - timestamp <= ONLINE_WINDOW_MS;
+}
+
+function canReopenDeletedAccount(user) {
+  if (user?.status !== 'deleted' || !user?.deletedAt) return false;
+  const deletedAt = Date.parse(String(user.deletedAt));
+  if (!Number.isFinite(deletedAt)) return false;
+  return Date.now() - deletedAt <= ACCOUNT_REOPEN_WINDOW_MS;
+}
+
+function deletedAccountReopenUntil(user) {
+  const deletedAt = Date.parse(String(user?.deletedAt ?? ''));
+  if (!Number.isFinite(deletedAt)) return null;
+  return new Date(deletedAt + ACCOUNT_REOPEN_WINDOW_MS).toISOString();
 }
 
 function issuePasswordResetToken(user, secret) {
@@ -445,6 +493,8 @@ const resolvers = {
     me: async (_, __, { currentUser }) => currentUser ?? null,
     authors: async (_, args, { repo }) => repo.listAuthors(args),
     onlineAuthors: async (_, args, { repo }) => repo.listOnlineAuthors(args),
+    todayVisitors: async (_, args, { repo }) => repo.listTodayVisitors(args),
+    birthdayAuthors: async (_, args, { repo }) => repo.listBirthdayAuthors(args),
     author: async (_, args, { repo }) => repo.getAuthor(args),
     works: async (_, args, { repo }) => repo.listWorks(args),
     announcedWorks: async (_, args, { repo }) => repo.listAnnouncedWorks(args),
@@ -480,6 +530,8 @@ const resolvers = {
     forumSections: async (_, __, { repo }) => repo.listForumSections(),
     forumTopics: async (_, args, { repo }) => repo.listForumTopics(args),
     forumTopic: async (_, args, { repo }) => repo.getForumTopic(args),
+    privateDialogs: async (_, args, { repo, currentUser }) => repo.listPrivateDialogs({ ...args, userId: requireAuth(currentUser).id }),
+    privateMessages: async (_, args, { repo, currentUser }) => repo.listPrivateMessages({ ...args, userId: requireAuth(currentUser).id }),
     contests: async (_, args, { repo }) => repo.listContests(args),
     radioTracks: async (_, args, { repo }) => repo.listRadioTracks(args),
   },
@@ -507,10 +559,24 @@ const resolvers = {
       return { token, user };
     },
     login: async (_, { input }, { repo, jwtSecret }) => {
-      const user = await repo.getUserByIdentifier(input.identifier);
+      const user = await repo.getUserByIdentifierIncludingDeleted(input.identifier);
       if (!user || !(await verifyPassword(input.password, user.passwordHash))) {
         throw new GraphQLError('Invalid credentials', {
           extensions: { code: 'UNAUTHENTICATED' },
+        });
+      }
+      if (user.status === 'deleted') {
+        if (canReopenDeletedAccount(user)) {
+          throw new GraphQLError('Аккаунт закрыт, но его ещё можно открыть.', {
+            extensions: {
+              code: 'ACCOUNT_REOPEN_AVAILABLE',
+              reopenUntil: deletedAccountReopenUntil(user),
+              login: user.login,
+            },
+          });
+        }
+        throw new GraphQLError('Аккаунт закрыт, и срок восстановления уже истёк.', {
+          extensions: { code: 'ACCOUNT_DELETED' },
         });
       }
       const token = issueToken(user, jwtSecret);
@@ -544,6 +610,23 @@ const resolvers = {
 
       return true;
     },
+    reopenClosedAccount: async (_, { input }, { repo, jwtSecret }) => {
+      const user = await repo.getUserByIdentifierIncludingDeleted(input.identifier);
+      if (!user || !(await verifyPassword(input.password, user.passwordHash))) {
+        throw new GraphQLError('Неверный логин/email или пароль.', {
+          extensions: { code: 'UNAUTHENTICATED' },
+        });
+      }
+      if (!canReopenDeletedAccount(user)) {
+        throw new GraphQLError('Этот аккаунт уже нельзя восстановить.', {
+          extensions: { code: 'ACCOUNT_DELETED' },
+        });
+      }
+      const reopenedUser = await repo.reopenUserAccount({ userId: user.id });
+      const token = issueToken(reopenedUser, jwtSecret);
+      return { token, user: reopenedUser };
+    },
+
     resetPassword: async (_, { token, password }, { repo, jwtSecret }) => {
       if (String(password || '').length < 8) {
         throw new GraphQLError('Password must be at least 8 characters long', {
@@ -599,6 +682,7 @@ const resolvers = {
         coverImageUrl: input.coverImageUrl,
         city: input.city,
         websiteUrl: input.websiteUrl,
+        birthDate: input.birthDate,
       });
     },
     closeMyAccount: async (_, __, { currentUser, repo }) => {
@@ -666,6 +750,13 @@ const resolvers = {
       const user = requireAuth(currentUser);
       return repo.softDeleteForumTopic({ topicId, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds) });
     },
+    incrementForumTopicViews: async (_, { topicId }, { repo }) => {
+      const topic = await repo.incrementForumTopicViews({ topicId });
+      if (!topic) {
+        throw new GraphQLError('Тема не найдена.', { extensions: { code: 'NOT_FOUND' } });
+      }
+      return topic;
+    },
     createForumPost: async (_, { topicId, body, parentPostId, imageUrl }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
       return repo.createForumPost({ topicId, body, parentPostId, imageUrl, authorUserId: user.id });
@@ -677,6 +768,14 @@ const resolvers = {
     deleteForumPost: async (_, { postId }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
       return repo.softDeleteForumPost({ postId, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds) });
+    },
+    sendPrivateMessage: async (_, { recipientUserId, recipientLogin, body }, { currentUser, repo }) => {
+      const user = requireAuth(currentUser);
+      return repo.sendPrivateMessage({ senderUserId: user.id, recipientUserId, recipientLogin, body });
+    },
+    markPrivateMessagesRead: async (_, { withUserId, withLogin }, { currentUser, repo }) => {
+      const user = requireAuth(currentUser);
+      return repo.markPrivateMessagesRead({ userId: user.id, withUserId, withLogin });
     },
   },
   Author: {
@@ -714,6 +813,10 @@ const resolvers = {
   },
   ForumPost: {
     author: async (parent, _, { repo }) => parent.author ?? repo.getAuthorByUserId(parent.userId),
+  },
+  PrivateMessage: {
+    sender: async (parent, _, { repo }) => parent.sender ?? repo.getAuthorByUserId(parent.senderUserId),
+    recipient: async (parent, _, { repo }) => parent.recipient ?? repo.getAuthorByUserId(parent.recipientUserId),
   },
 };
 

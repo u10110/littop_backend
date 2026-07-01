@@ -14,6 +14,13 @@ function toIsoDate(value) {
   return value?.toISOString?.() ?? value ?? null;
 }
 
+function toIsoDateOnly(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
+
 function isRecentlyOnline(value) {
   const timestamp = Date.parse(String(value ?? ''));
   if (!Number.isFinite(timestamp)) return false;
@@ -42,6 +49,7 @@ function userFromRow(row) {
       coverImageUrl: row.cover_image_url,
       city: row.city,
       websiteUrl: row.website_url,
+      birthDate: toIsoDateOnly(row.birth_date),
       ratingTotal: Number(row.rating_total ?? 0),
       worksCountCached: Number(row.works_count_cached ?? 0),
       isClassic: Boolean(row.is_classic),
@@ -183,7 +191,7 @@ function forumTopicFromRow(row) {
     body: row.body,
     sectionSlug: row.section_slug,
     repliesCount: Number(row.replies_count ?? 0),
-    viewsCount: Number(row.views_count ?? 0),
+    viewsCount: normalizeForumTopicViewCount(row.views_count),
     status: row.status,
     isPinned: Boolean(row.is_pinned),
     tags: Array.isArray(row.tags) ? row.tags.filter(Boolean) : [],
@@ -412,6 +420,107 @@ function normalizeOptionalText(value) {
   return normalized || null;
 }
 
+function normalizeOptionalDate(value) {
+  if (value == null || value === '') return null;
+  const normalized = String(value).trim();
+  if (!normalized) return null;
+  const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) throw new Error('birthDate must use YYYY-MM-DD');
+  return normalized;
+}
+
+function normalizeForumTopicViewCount(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? Math.trunc(numeric) : 0;
+}
+
+function privateMessageFromRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    senderUserId: row.sender_user_id,
+    recipientUserId: row.recipient_user_id,
+    body: row.body,
+    status: row.status,
+    createdAt: toIsoDate(row.created_at),
+    updatedAt: toIsoDate(row.updated_at),
+    readAt: toIsoDate(row.read_at),
+    sender: row.sender_login ? {
+      id: row.sender_id ?? row.sender_user_id,
+      email: row.sender_email,
+      login: row.sender_login,
+      displayName: row.sender_display_name,
+      bio: row.sender_bio,
+      avatarUrl: row.sender_avatar_url,
+      coverImageUrl: row.sender_cover_image_url,
+      city: row.sender_city,
+      websiteUrl: row.sender_website_url,
+      birthDate: toIsoDateOnly(row.sender_birth_date),
+      ratingTotal: Number(row.sender_rating_total ?? 0),
+      worksCountCached: Number(row.sender_works_count_cached ?? 0),
+      isClassic: Boolean(row.sender_is_classic),
+      isFeatured: Boolean(row.sender_is_featured),
+      registeredAt: toIsoDate(row.sender_registered_at),
+      lastSeenAt: toIsoDate(row.sender_last_seen_at),
+      isOnline: isRecentlyOnline(row.sender_last_seen_at),
+      createdAt: toIsoDate(row.sender_created_at),
+      updatedAt: toIsoDate(row.sender_updated_at),
+    } : null,
+    recipient: row.recipient_login ? {
+      id: row.recipient_id ?? row.recipient_user_id,
+      email: row.recipient_email,
+      login: row.recipient_login,
+      displayName: row.recipient_display_name,
+      bio: row.recipient_bio,
+      avatarUrl: row.recipient_avatar_url,
+      coverImageUrl: row.recipient_cover_image_url,
+      city: row.recipient_city,
+      websiteUrl: row.recipient_website_url,
+      birthDate: toIsoDateOnly(row.recipient_birth_date),
+      ratingTotal: Number(row.recipient_rating_total ?? 0),
+      worksCountCached: Number(row.recipient_works_count_cached ?? 0),
+      isClassic: Boolean(row.recipient_is_classic),
+      isFeatured: Boolean(row.recipient_is_featured),
+      registeredAt: toIsoDate(row.recipient_registered_at),
+      lastSeenAt: toIsoDate(row.recipient_last_seen_at),
+      isOnline: isRecentlyOnline(row.recipient_last_seen_at),
+      createdAt: toIsoDate(row.recipient_created_at),
+      updatedAt: toIsoDate(row.recipient_updated_at),
+    } : null,
+  };
+}
+
+function privateDialogFromRow(row) {
+  if (!row) return null;
+  return {
+    peerUserId: row.peer_user_id,
+    lastMessageBody: row.last_message_body,
+    lastMessageAt: toIsoDate(row.last_message_at),
+    unreadCount: Number(row.unread_count ?? 0),
+    peer: row.peer_login ? {
+      id: row.peer_id ?? row.peer_user_id,
+      email: row.peer_email,
+      login: row.peer_login,
+      displayName: row.peer_display_name,
+      bio: row.peer_bio,
+      avatarUrl: row.peer_avatar_url,
+      coverImageUrl: row.peer_cover_image_url,
+      city: row.peer_city,
+      websiteUrl: row.peer_website_url,
+      birthDate: toIsoDateOnly(row.peer_birth_date),
+      ratingTotal: Number(row.peer_rating_total ?? 0),
+      worksCountCached: Number(row.peer_works_count_cached ?? 0),
+      isClassic: Boolean(row.peer_is_classic),
+      isFeatured: Boolean(row.peer_is_featured),
+      registeredAt: toIsoDate(row.peer_registered_at),
+      lastSeenAt: toIsoDate(row.peer_last_seen_at),
+      isOnline: isRecentlyOnline(row.peer_last_seen_at),
+      createdAt: toIsoDate(row.peer_created_at),
+      updatedAt: toIsoDate(row.peer_updated_at),
+    } : null,
+  };
+}
+
 function normalizeSocialProvider(value) {
   const provider = String(value ?? '').trim().toLowerCase();
   if (!provider) throw new Error('provider is required');
@@ -459,7 +568,7 @@ export function createPostgresRepository(pool) {
     async findUserByEmailOrLogin(email, login) {
       const { rows } = await pool.query(
         `
-        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         left join author_profiles ap on ap.user_id = u.id
         where u.email = $1 or u.login = $2
@@ -473,11 +582,25 @@ export function createPostgresRepository(pool) {
     async getUserByIdentifier(identifier) {
       const { rows } = await pool.query(
         `
-        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         left join author_profiles ap on ap.user_id = u.id
         where (u.email = $1 or u.login = $1)
           and u.status <> 'deleted'
+        limit 1
+        `,
+        [identifier],
+      );
+      return userFromRow(rows[0]);
+    },
+
+    async getUserByIdentifierIncludingDeleted(identifier) {
+      const { rows } = await pool.query(
+        `
+        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+        from users u
+        left join author_profiles ap on ap.user_id = u.id
+        where (u.email = $1 or u.login = $1)
         limit 1
         `,
         [identifier],
@@ -522,7 +645,7 @@ export function createPostgresRepository(pool) {
     async getUserById(id) {
       const { rows } = await pool.query(
         `
-        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         left join author_profiles ap on ap.user_id = u.id
         where u.id = $1
@@ -539,7 +662,7 @@ export function createPostgresRepository(pool) {
 
       const { rows } = await pool.query(
         `
-        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         left join author_profiles ap on ap.user_id = u.id
         where u.email = $1
@@ -582,7 +705,7 @@ export function createPostgresRepository(pool) {
 
       const { rows } = await pool.query(
         `
-        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from social_accounts sa
         join users u on u.id = sa.user_id
         left join author_profiles ap on ap.user_id = u.id
@@ -728,7 +851,7 @@ export function createPostgresRepository(pool) {
       }
     },
 
-    async updateUserProfile({ userId, displayName, bio = null, avatarUrl = undefined, coverImageUrl = undefined, city = null, websiteUrl = null }) {
+    async updateUserProfile({ userId, displayName, bio = null, avatarUrl = undefined, coverImageUrl = undefined, city = null, websiteUrl = null, birthDate = null }) {
       const normalizedDisplayName = String(displayName ?? '').trim();
       if (!normalizedDisplayName) {
         throw new Error('displayName is required');
@@ -736,8 +859,8 @@ export function createPostgresRepository(pool) {
 
       await pool.query(
         `
-        insert into author_profiles (user_id, display_name, bio, avatar_url, cover_image_url, city, website_url)
-        values ($1, $2, $3, $4, $5, $6, $7)
+        insert into author_profiles (user_id, display_name, bio, avatar_url, cover_image_url, city, website_url, birth_date)
+        values ($1, $2, $3, $4, $5, $6, $7, $8)
         on conflict (user_id) do update set
           display_name = excluded.display_name,
           bio = excluded.bio,
@@ -745,6 +868,7 @@ export function createPostgresRepository(pool) {
           cover_image_url = excluded.cover_image_url,
           city = excluded.city,
           website_url = excluded.website_url,
+          birth_date = excluded.birth_date,
           updated_at = now()
         `,
         [
@@ -755,6 +879,7 @@ export function createPostgresRepository(pool) {
           normalizeOptionalText(coverImageUrl),
           normalizeOptionalText(city),
           normalizeOptionalText(websiteUrl),
+          normalizeOptionalDate(birthDate),
         ],
       );
 
@@ -781,7 +906,8 @@ export function createPostgresRepository(pool) {
         await client.query(
           `
           update works
-          set status = 'archived',
+          set account_restore_status = case when status <> 'archived' then status else account_restore_status end,
+              status = 'archived',
               updated_at = now()
           where author_user_id = $1
             and status <> 'archived'
@@ -791,7 +917,8 @@ export function createPostgresRepository(pool) {
         await client.query(
           `
           update forum_topics
-          set status = 'archived',
+          set account_restore_status = case when status <> 'archived' then status else account_restore_status end,
+              status = 'archived',
               updated_at = now()
           where author_user_id = $1
             and status <> 'archived'
@@ -801,7 +928,8 @@ export function createPostgresRepository(pool) {
         await client.query(
           `
           update forum_posts
-          set status = 'deleted',
+          set account_restore_status = case when status <> 'deleted' then status else account_restore_status end,
+              status = 'deleted',
               updated_at = now()
           where author_user_id = $1
             and status <> 'deleted'
@@ -811,7 +939,8 @@ export function createPostgresRepository(pool) {
         await client.query(
           `
           update work_comments
-          set status = 'deleted',
+          set account_restore_status = case when status <> 'deleted' then status else account_restore_status end,
+              status = 'deleted',
               updated_at = now()
           where user_id = $1
             and status <> 'deleted'
@@ -822,6 +951,7 @@ export function createPostgresRepository(pool) {
           `
           update users
           set status = 'deleted',
+              deleted_at = now(),
               updated_at = now(),
               last_seen_at = now()
           where id = $1
@@ -903,11 +1033,98 @@ export function createPostgresRepository(pool) {
     },
 
 
+    async reopenUserAccount({ userId }) {
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        const updated = await client.query(
+          `
+          update users
+          set status = 'active',
+              deleted_at = null,
+              updated_at = now()
+          where id = $1
+            and status = 'deleted'
+          returning id
+          `,
+          [userId],
+        );
+        if (!updated.rows[0]) {
+          throw new Error('Аккаунт нельзя открыть повторно.');
+        }
+        await client.query(
+          `
+          update works
+          set status = coalesce(account_restore_status, 'published'::publication_status),
+              account_restore_status = null,
+              updated_at = now()
+          where author_user_id = $1
+            and status = 'archived'
+          `,
+          [userId],
+        );
+        await client.query(
+          `
+          update forum_topics
+          set status = coalesce(account_restore_status, 'open'::forum_topic_status),
+              account_restore_status = null,
+              updated_at = now()
+          where author_user_id = $1
+            and status = 'archived'
+          `,
+          [userId],
+        );
+        await client.query(
+          `
+          update forum_posts
+          set status = coalesce(account_restore_status, 'visible'::moderation_status),
+              account_restore_status = null,
+              updated_at = now()
+          where author_user_id = $1
+            and status = 'deleted'
+          `,
+          [userId],
+        );
+        await client.query(
+          `
+          update work_comments
+          set status = coalesce(account_restore_status, 'visible'::moderation_status),
+              account_restore_status = null,
+              updated_at = now()
+          where user_id = $1
+            and status = 'deleted'
+          `,
+          [userId],
+        );
+        await client.query(
+          `
+          update author_profiles
+          set works_count_cached = (
+            select count(*)::int
+            from works
+            where author_user_id = $1
+              and status = 'published'
+          ),
+              updated_at = now()
+          where user_id = $1
+          `,
+          [userId],
+        );
+        await client.query('commit');
+        return this.getUserById(userId);
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
     async getAuthorByUserId(userId) {
       const { rows } = await pool.query(
         `
         select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
-               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         join author_profiles ap on ap.user_id = u.id
         where u.id = $1
@@ -933,7 +1150,7 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
-               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         join author_profiles ap on ap.user_id = u.id
         ${where ? `${where} and u.status <> 'deleted'` : `where u.status <> 'deleted'`}
@@ -950,7 +1167,7 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
-               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         join author_profiles ap on ap.user_id = u.id
         where u.status <> 'deleted'
@@ -965,13 +1182,52 @@ export function createPostgresRepository(pool) {
     },
 
 
+    async listTodayVisitors({ limit = 12 } = {}) {
+      const page = buildLimitOffset(limit, 0);
+      const { rows } = await pool.query(
+        `
+        select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+        from users u
+        join author_profiles ap on ap.user_id = u.id
+        where u.status <> 'deleted'
+          and u.last_seen_at is not null
+          and u.last_seen_at >= date_trunc('day', now())
+        order by u.last_seen_at desc, u.registered_at desc
+        limit $1
+        `,
+        [page.limit],
+      );
+      return rows.map(authorFromRow);
+    },
+
+    async listBirthdayAuthors({ limit = 12 } = {}) {
+      const page = buildLimitOffset(limit, 0);
+      const { rows } = await pool.query(
+        `
+        select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+        from users u
+        join author_profiles ap on ap.user_id = u.id
+        where u.status <> 'deleted'
+          and ap.birth_date is not null
+          and extract(month from ap.birth_date) = extract(month from current_date)
+          and extract(day from ap.birth_date) = extract(day from current_date)
+        order by ap.display_name asc, u.registered_at desc
+        limit $1
+        `,
+        [page.limit],
+      );
+      return rows.map(authorFromRow);
+    },
+
     async getAuthor({ id = null, login = null } = {}) {
       const field = id != null ? 'u.id = $1' : 'u.login = $1';
       const value = id != null ? id : login;
       const { rows } = await pool.query(
         `
         select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
-               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
         from users u
         join author_profiles ap on ap.user_id = u.id
         where ${field}
@@ -1036,6 +1292,7 @@ export function createPostgresRepository(pool) {
                u.last_seen_at as viewer_last_seen_at, u.created_at as viewer_created_at, u.updated_at as viewer_updated_at,
                ap.display_name as viewer_display_name, ap.bio as viewer_bio, ap.avatar_url as viewer_avatar_url,
                ap.cover_image_url as viewer_cover_image_url, ap.city as viewer_city, ap.website_url as viewer_website_url,
+               ap.birth_date as viewer_birth_date,
                ap.rating_total as viewer_rating_total, ap.works_count_cached as viewer_works_count_cached,
                ap.is_classic as viewer_is_classic, ap.is_featured as viewer_is_featured
         from work_views wv
@@ -1300,6 +1557,7 @@ export function createPostgresRepository(pool) {
                u.last_seen_at as viewer_last_seen_at, u.created_at as viewer_created_at, u.updated_at as viewer_updated_at,
                ap.display_name as viewer_display_name, ap.bio as viewer_bio, ap.avatar_url as viewer_avatar_url,
                ap.cover_image_url as viewer_cover_image_url, ap.city as viewer_city, ap.website_url as viewer_website_url,
+               ap.birth_date as viewer_birth_date,
                ap.rating_total as viewer_rating_total, ap.works_count_cached as viewer_works_count_cached,
                ap.is_classic as viewer_is_classic, ap.is_featured as viewer_is_featured
         from latest
@@ -1365,6 +1623,7 @@ export function createPostgresRepository(pool) {
                u.last_seen_at as viewer_last_seen_at, u.created_at as viewer_created_at, u.updated_at as viewer_updated_at,
                ap.display_name as viewer_display_name, ap.bio as viewer_bio, ap.avatar_url as viewer_avatar_url,
                ap.cover_image_url as viewer_cover_image_url, ap.city as viewer_city, ap.website_url as viewer_website_url,
+               ap.birth_date as viewer_birth_date,
                ap.rating_total as viewer_rating_total, ap.works_count_cached as viewer_works_count_cached,
                ap.is_classic as viewer_is_classic, ap.is_featured as viewer_is_featured
         from latest
@@ -1389,7 +1648,7 @@ export function createPostgresRepository(pool) {
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
-               ap.website_url as author_website_url, ap.rating_total as author_rating_total,
+               ap.website_url as author_website_url, ap.birth_date as author_birth_date, ap.rating_total as author_rating_total,
                ap.works_count_cached as author_works_count_cached, ap.is_classic as author_is_classic,
                ap.is_featured as author_is_featured
         from work_announcements wa
@@ -1482,7 +1741,7 @@ export function createPostgresRepository(pool) {
                cu.created_at as comment_author_created_at, cu.updated_at as comment_author_updated_at,
                cap.display_name as comment_author_display_name, cap.bio as comment_author_bio,
                cap.avatar_url as comment_author_avatar_url, cap.cover_image_url as comment_author_cover_image_url,
-               cap.city as comment_author_city, cap.website_url as comment_author_website_url,
+               cap.city as comment_author_city, cap.website_url as comment_author_website_url, cap.birth_date as comment_author_birth_date,
                cap.rating_total as comment_author_rating_total, cap.works_count_cached as comment_author_works_count_cached,
                cap.is_classic as comment_author_is_classic, cap.is_featured as comment_author_is_featured,
                wu.id as work_author_id, wu.email as work_author_email, wu.login as work_author_login,
@@ -1490,7 +1749,7 @@ export function createPostgresRepository(pool) {
                wu.created_at as work_author_created_at, wu.updated_at as work_author_updated_at,
                wap.display_name as work_author_display_name, wap.bio as work_author_bio,
                wap.avatar_url as work_author_avatar_url, wap.cover_image_url as work_author_cover_image_url,
-               wap.city as work_author_city, wap.website_url as work_author_website_url,
+               wap.city as work_author_city, wap.website_url as work_author_website_url, wap.birth_date as work_author_birth_date,
                wap.rating_total as work_author_rating_total, wap.works_count_cached as work_author_works_count_cached,
                wap.is_classic as work_author_is_classic, wap.is_featured as work_author_is_featured
         from work_comments wc
@@ -1521,7 +1780,7 @@ export function createPostgresRepository(pool) {
                cu.created_at as comment_author_created_at, cu.updated_at as comment_author_updated_at,
                cap.display_name as comment_author_display_name, cap.bio as comment_author_bio,
                cap.avatar_url as comment_author_avatar_url, cap.cover_image_url as comment_author_cover_image_url,
-               cap.city as comment_author_city, cap.website_url as comment_author_website_url,
+               cap.city as comment_author_city, cap.website_url as comment_author_website_url, cap.birth_date as comment_author_birth_date,
                cap.rating_total as comment_author_rating_total, cap.works_count_cached as comment_author_works_count_cached,
                cap.is_classic as comment_author_is_classic, cap.is_featured as comment_author_is_featured,
                wu.id as work_author_id, wu.email as work_author_email, wu.login as work_author_login,
@@ -1529,7 +1788,7 @@ export function createPostgresRepository(pool) {
                wu.created_at as work_author_created_at, wu.updated_at as work_author_updated_at,
                wap.display_name as work_author_display_name, wap.bio as work_author_bio,
                wap.avatar_url as work_author_avatar_url, wap.cover_image_url as work_author_cover_image_url,
-               wap.city as work_author_city, wap.website_url as work_author_website_url,
+               wap.city as work_author_city, wap.website_url as work_author_website_url, wap.birth_date as work_author_birth_date,
                wap.rating_total as work_author_rating_total, wap.works_count_cached as work_author_works_count_cached,
                wap.is_classic as work_author_is_classic, wap.is_featured as work_author_is_featured
         from work_comments wc
@@ -1583,7 +1842,7 @@ export function createPostgresRepository(pool) {
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
-               ap.website_url as author_website_url, ap.rating_total as author_rating_total,
+               ap.website_url as author_website_url, ap.birth_date as author_birth_date, ap.rating_total as author_rating_total,
                ap.works_count_cached as author_works_count_cached, ap.is_classic as author_is_classic,
                ap.is_featured as author_is_featured
         from works w
@@ -1609,7 +1868,7 @@ export function createPostgresRepository(pool) {
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
-               ap.website_url as author_website_url, ap.rating_total as author_rating_total,
+               ap.website_url as author_website_url, ap.birth_date as author_birth_date, ap.rating_total as author_rating_total,
                ap.works_count_cached as author_works_count_cached, ap.is_classic as author_is_classic,
                ap.is_featured as author_is_featured
         from works w
@@ -1634,7 +1893,7 @@ export function createPostgresRepository(pool) {
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
-               ap.website_url as author_website_url, ap.rating_total as author_rating_total,
+               ap.website_url as author_website_url, ap.birth_date as author_birth_date, ap.rating_total as author_rating_total,
                ap.works_count_cached as author_works_count_cached, ap.is_classic as author_is_classic,
                ap.is_featured as author_is_featured
         from works w
@@ -2007,7 +2266,7 @@ export function createPostgresRepository(pool) {
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
-               ap.website_url as author_website_url, ap.rating_total as author_rating_total,
+               ap.website_url as author_website_url, ap.birth_date as author_birth_date, ap.rating_total as author_rating_total,
                ap.works_count_cached as author_works_count_cached, ap.is_classic as author_is_classic,
                ap.is_featured as author_is_featured
         from work_comments wc
@@ -2048,7 +2307,7 @@ export function createPostgresRepository(pool) {
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
-               ap.website_url as author_website_url, ap.rating_total as author_rating_total,
+               ap.website_url as author_website_url, ap.birth_date as author_birth_date, ap.rating_total as author_rating_total,
                ap.works_count_cached as author_works_count_cached, ap.is_classic as author_is_classic,
                ap.is_featured as author_is_featured,
                array_remove(array_agg(distinct tg.name), null) as tags
@@ -2075,7 +2334,7 @@ export function createPostgresRepository(pool) {
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
-               ap.website_url as author_website_url, ap.rating_total as author_rating_total,
+               ap.website_url as author_website_url, ap.birth_date as author_birth_date, ap.rating_total as author_rating_total,
                ap.works_count_cached as author_works_count_cached, ap.is_classic as author_is_classic,
                ap.is_featured as author_is_featured,
                array_remove(array_agg(distinct tg.name), null) as tags
@@ -2352,13 +2611,29 @@ export function createPostgresRepository(pool) {
       }
     },
 
+    async incrementForumTopicViews({ topicId }) {
+      const { rows } = await pool.query(
+        `
+        update forum_topics
+        set views_count = coalesce(views_count, 0) + 1,
+            updated_at = now()
+        where id = $1
+          and status in ('open', 'closed')
+        returning id
+        `,
+        [topicId],
+      );
+      if (!rows[0]) return null;
+      return this.getForumTopic({ id: topicId });
+    },
+
     async listForumPosts(topicId) {
       const { rows } = await pool.query(
         `
         select fp.*, u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
-               ap.website_url as author_website_url, ap.rating_total as author_rating_total,
+               ap.website_url as author_website_url, ap.birth_date as author_birth_date, ap.rating_total as author_rating_total,
                ap.works_count_cached as author_works_count_cached, ap.is_classic as author_is_classic,
                ap.is_featured as author_is_featured
         from forum_posts fp
@@ -2371,6 +2646,135 @@ export function createPostgresRepository(pool) {
         [topicId],
       );
       return rows.map(forumPostFromRow);
+    },
+
+    async listPrivateDialogs({ userId, limit = 50 } = {}) {
+      if (!userId) return [];
+      const page = buildLimitOffset(limit, 0);
+      const { rows } = await pool.query(
+        `
+        with dialog_base as (
+          select
+            case when pm.sender_user_id = $1 then pm.recipient_user_id else pm.sender_user_id end as peer_user_id,
+            max(pm.created_at) as last_message_at,
+            count(*) filter (where pm.recipient_user_id = $1 and pm.read_at is null and pm.status = 'visible')::int as unread_count
+          from private_messages pm
+          where pm.status = 'visible'
+            and (pm.sender_user_id = $1 or pm.recipient_user_id = $1)
+          group by 1
+        )
+        select db.peer_user_id, db.last_message_at, db.unread_count,
+               lm.body as last_message_body,
+               u.id as peer_id, u.email as peer_email, u.login as peer_login, u.registered_at as peer_registered_at, u.last_seen_at as peer_last_seen_at,
+               u.created_at as peer_created_at, u.updated_at as peer_updated_at,
+               ap.display_name as peer_display_name, ap.bio as peer_bio, ap.avatar_url as peer_avatar_url,
+               ap.cover_image_url as peer_cover_image_url, ap.city as peer_city, ap.website_url as peer_website_url,
+               ap.birth_date as peer_birth_date, ap.rating_total as peer_rating_total, ap.works_count_cached as peer_works_count_cached,
+               ap.is_classic as peer_is_classic, ap.is_featured as peer_is_featured
+        from dialog_base db
+        join users u on u.id = db.peer_user_id
+        left join author_profiles ap on ap.user_id = u.id
+        left join lateral (
+          select pm.body
+          from private_messages pm
+          where pm.status = 'visible'
+            and ((pm.sender_user_id = $1 and pm.recipient_user_id = db.peer_user_id)
+              or (pm.sender_user_id = db.peer_user_id and pm.recipient_user_id = $1))
+          order by pm.created_at desc, pm.id desc
+          limit 1
+        ) lm on true
+        where u.status <> 'deleted'
+        order by db.last_message_at desc
+        limit $2
+        `,
+        [userId, page.limit],
+      );
+      return rows.map(privateDialogFromRow);
+    },
+
+    async listPrivateMessages({ userId, withUserId = null, withLogin = null, limit = 100 } = {}) {
+      if (!userId) return [];
+      let peerUserId = withUserId;
+      if (!peerUserId && withLogin) {
+        const peer = await this.getAuthor({ login: withLogin });
+        peerUserId = peer?.id ?? null;
+      }
+      if (!peerUserId) return [];
+      const page = buildLimitOffset(limit, 0);
+      const { rows } = await pool.query(
+        `
+        select pm.*,
+               su.id as sender_id, su.email as sender_email, su.login as sender_login, su.registered_at as sender_registered_at, su.last_seen_at as sender_last_seen_at,
+               su.created_at as sender_created_at, su.updated_at as sender_updated_at,
+               sap.display_name as sender_display_name, sap.bio as sender_bio, sap.avatar_url as sender_avatar_url,
+               sap.cover_image_url as sender_cover_image_url, sap.city as sender_city, sap.website_url as sender_website_url, sap.birth_date as sender_birth_date,
+               sap.rating_total as sender_rating_total, sap.works_count_cached as sender_works_count_cached, sap.is_classic as sender_is_classic, sap.is_featured as sender_is_featured,
+               ru.id as recipient_id, ru.email as recipient_email, ru.login as recipient_login, ru.registered_at as recipient_registered_at, ru.last_seen_at as recipient_last_seen_at,
+               ru.created_at as recipient_created_at, ru.updated_at as recipient_updated_at,
+               rap.display_name as recipient_display_name, rap.bio as recipient_bio, rap.avatar_url as recipient_avatar_url,
+               rap.cover_image_url as recipient_cover_image_url, rap.city as recipient_city, rap.website_url as recipient_website_url, rap.birth_date as recipient_birth_date,
+               rap.rating_total as recipient_rating_total, rap.works_count_cached as recipient_works_count_cached, rap.is_classic as recipient_is_classic, rap.is_featured as recipient_is_featured
+        from private_messages pm
+        join users su on su.id = pm.sender_user_id
+        left join author_profiles sap on sap.user_id = su.id
+        join users ru on ru.id = pm.recipient_user_id
+        left join author_profiles rap on rap.user_id = ru.id
+        where pm.status = 'visible'
+          and ((pm.sender_user_id = $1 and pm.recipient_user_id = $2)
+            or (pm.sender_user_id = $2 and pm.recipient_user_id = $1))
+        order by pm.created_at asc, pm.id asc
+        limit $3
+        `,
+        [userId, peerUserId, page.limit],
+      );
+      return rows.map(privateMessageFromRow);
+    },
+
+    async sendPrivateMessage({ senderUserId, recipientUserId = null, recipientLogin = null, body }) {
+      const normalizedBody = String(body ?? '').trim();
+      if (!normalizedBody) throw new Error('body is required');
+      let resolvedRecipientUserId = recipientUserId;
+      if (!resolvedRecipientUserId && recipientLogin) {
+        const peer = await this.getAuthor({ login: recipientLogin });
+        resolvedRecipientUserId = peer?.id ?? null;
+      }
+      if (!resolvedRecipientUserId) throw new Error('Получатель не найден');
+      if (String(resolvedRecipientUserId) == String(senderUserId)) throw new Error('Нельзя отправить личное сообщение самой себе.');
+      const recipientUser = await this.getUserById(resolvedRecipientUserId);
+      if (!recipientUser || recipientUser.status === 'deleted') throw new Error('Получатель недоступен.');
+      const { rows } = await pool.query(
+        `
+        insert into private_messages (sender_user_id, recipient_user_id, body)
+        values ($1, $2, $3)
+        returning id
+        `,
+        [senderUserId, resolvedRecipientUserId, normalizedBody],
+      );
+      const messages = await this.listPrivateMessages({ userId: senderUserId, withUserId: resolvedRecipientUserId, limit: 1 });
+      return messages[messages.length - 1] ?? null;
+    },
+
+    async markPrivateMessagesRead({ userId, withUserId = null, withLogin = null }) {
+      if (!userId) return 0;
+      let peerUserId = withUserId;
+      if (!peerUserId && withLogin) {
+        const peer = await this.getAuthor({ login: withLogin });
+        peerUserId = peer?.id ?? null;
+      }
+      if (!peerUserId) return 0;
+      const { rowCount } = await pool.query(
+        `
+        update private_messages
+        set read_at = now(),
+            updated_at = now()
+        where sender_user_id = $1
+          and recipient_user_id = $2
+          and status = 'visible'
+          and read_at is null
+        `,
+        [peerUserId, userId],
+      );
+      return rowCount;
     },
 
     async listContests({ status = null, scope = null, limit = 20, offset = 0 } = {}) {
