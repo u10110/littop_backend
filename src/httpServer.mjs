@@ -7,6 +7,11 @@ import { randomUUID } from 'node:crypto';
 
 import { HeaderMap } from '@apollo/server';
 
+import { PutObjectCommand, S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { pipeline } from "stream/promises";
+import * as fs from "fs";
+import { s3 } from "./S3.js"; // Импор
+
 import { buildContext } from './createServer.mjs';
 import {
   buildSocialAuthFailureRedirect,
@@ -155,6 +160,35 @@ function sanitizeStoredBaseName(filename) {
     .replace(/^-+|-+$/g, '')
     .slice(0, 80) || 'track';
 }
+
+async function downloadFile(storagePath, res) {
+  const command = new GetObjectCommand({
+    Bucket: "littop",
+    Key: storagePath, // Путь к файлу в бакете
+  });
+
+  try {
+    const s3Response = await s3.send(command);
+
+    // 1. Копируем тип контента из S3 (audio/mpeg, application/pdf и т.д.)
+    res.setHeader("Content-Type", s3Response.ContentType);
+    
+    // 2. Говорим браузеру открыть файл встроенными средствами (inline)
+    res.setHeader("Content-Disposition", "inline");
+
+    // 3. Перенаправляем поток данных из S3 напрямую клиенту
+    s3Response.Body.pipe(res);
+
+  } catch (err) {
+    console.error("Ошибка при поиске файла:", err);
+      if (err.name === "NoSuchKey") {
+        res.status(404).send("Файл не найден");
+      } else {
+        res.status(500).send("Ошибка сервера при чтении файла");
+      }
+  }
+}
+
 
 function detectAudioExtension({ mimeType, fileName }) {
   const normalizedMimeType = String(mimeType || '').trim().toLowerCase();
@@ -403,6 +437,23 @@ async function handleSocialAuthRequest({ req, res, pathname, searchParams, repo,
   return true;
 }
 
+async function uploadFile(storagePath, fileStream, mimeType) {
+
+  const command = new PutObjectCommand({
+    Bucket: "",
+    Key: storagePath, // Путь, по которому файл сохранится в бакете
+    Body: fileStream,
+    ContentType: mimeType,
+  });
+
+  try {
+    const response = await s3.send(command);
+    console.log("Файл успешно загружен!", response);
+  } catch (err) {
+    console.error("Ошибка загрузки:", err);
+  }
+}
+
 async function handleRadioUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env }) {
   if (pathname !== AUDIO_UPLOAD_ENDPOINT) {
     return false;
@@ -437,7 +488,7 @@ async function handleRadioUploadRequest({ req, res, pathname, repo, jwtSecret, a
 
     const storedFileName = `${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
     const storagePath = join(storageDir, storedFileName);
-    await writeFile(storagePath, fileBuffer);
+    await uploadFile(storagePath, fileBuffer, body?.mimeType);
 
     const currentUser = context.currentUser;
     const publicUrl = `${resolvePublicBaseUrl(req, env)}${AUDIO_PUBLIC_PATH_PREFIX}${storedFileName}`;
@@ -539,7 +590,7 @@ async function handleProfileImageUploadRequest({ req, res, pathname, repo, jwtSe
 
     const storedFileName = `${kind}-${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
     const storagePath = join(storageDir, storedFileName);
-    await writeFile(storagePath, fileBuffer);
+    await  uploadFile(storagePath, fileBuffer, body?.mimeType);
 
     const imageUrl = `${resolvePublicBaseUrl(req, env)}${PROFILE_PUBLIC_PATH_PREFIX}${storedFileName}`;
     sendJson(res, 201, {
@@ -589,7 +640,7 @@ async function handleWorkMediaUploadRequest({ req, res, pathname, repo, jwtSecre
     const kindPrefix = kind === 'audio' ? 'work-audio' : 'work-pdf';
     const storedFileName = `${kindPrefix}-${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
     const storagePath = join(storageDir, storedFileName);
-    await writeFile(storagePath, fileBuffer);
+    await uploadFile(storagePath, fileBuffer, body?.mimeType);
 
     const publicPrefix = kind === 'audio' ? AUDIO_PUBLIC_PATH_PREFIX : WORK_MEDIA_PUBLIC_PATH_PREFIX;
     const publicUrl = `${resolvePublicBaseUrl(req, env)}${publicPrefix}${storedFileName}`;
@@ -628,11 +679,7 @@ async function handleAudioFileRequest({ req, res, pathname, env }) {
   const storagePath = join(resolveAudioStorageDir(env), requestedFileName);
 
   try {
-    const fileStat = await stat(storagePath);
-    res.statusCode = 200;
-    res.setHeader('content-type', AUDIO_CONTENT_TYPE_BY_EXTENSION[extname(requestedFileName).toLowerCase()] || 'application/octet-stream');
-    res.setHeader('content-length', String(fileStat.size));
-    createReadStream(storagePath).pipe(res);
+    downloadFile(storagePath, res);
   } catch {
     sendJson(res, 404, { error: 'Audio file not found' });
   }
@@ -659,11 +706,7 @@ async function handleDiscussionImageFileRequest({ req, res, pathname, env }) {
   const storagePath = join(resolveDiscussionStorageDir(env), requestedFileName);
 
   try {
-    const fileStat = await stat(storagePath);
-    res.statusCode = 200;
-    res.setHeader('content-type', IMAGE_CONTENT_TYPE_BY_EXTENSION[extname(requestedFileName).toLowerCase()] || 'application/octet-stream');
-    res.setHeader('content-length', String(fileStat.size));
-    createReadStream(storagePath).pipe(res);
+    downloadFile(storagePath, res);
   } catch {
     sendJson(res, 404, { error: 'Discussion image not found' });
   }
@@ -690,11 +733,7 @@ async function handleProfileImageFileRequest({ req, res, pathname, env }) {
   const storagePath = join(resolveProfileStorageDir(env), requestedFileName);
 
   try {
-    const fileStat = await stat(storagePath);
-    res.statusCode = 200;
-    res.setHeader('content-type', IMAGE_CONTENT_TYPE_BY_EXTENSION[extname(requestedFileName).toLowerCase()] || 'application/octet-stream');
-    res.setHeader('content-length', String(fileStat.size));
-    createReadStream(storagePath).pipe(res);
+    downloadFile(storagePath, res);
   } catch {
     sendJson(res, 404, { error: 'Profile image not found' });
   }
@@ -721,11 +760,7 @@ async function handleWorkMediaFileRequest({ req, res, pathname, env }) {
   const storagePath = join(resolveWorkMediaStorageDir(env), requestedFileName);
 
   try {
-    const fileStat = await stat(storagePath);
-    res.statusCode = 200;
-    res.setHeader('content-type', WORK_MEDIA_CONTENT_TYPE_BY_EXTENSION[extname(requestedFileName).toLowerCase()] || 'application/octet-stream');
-    res.setHeader('content-length', String(fileStat.size));
-    createReadStream(storagePath).pipe(res);
+    downloadFile(storagePath, res);
   } catch {
     sendJson(res, 404, { error: 'Work media file not found' });
   }
