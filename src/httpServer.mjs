@@ -440,7 +440,7 @@ async function handleSocialAuthRequest({ req, res, pathname, searchParams, repo,
 async function uploadFile(storagePath, fileStream, mimeType) {
 
   const command = new PutObjectCommand({
-    Bucket: "",
+    Bucket: "littop",
     Key: storagePath, // Путь, по которому файл сохранится в бакете
     Body: fileStream,
     ContentType: mimeType,
