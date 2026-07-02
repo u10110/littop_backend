@@ -181,11 +181,7 @@ async function downloadFile(storagePath, res) {
 
   } catch (err) {
     console.error("Ошибка при поиске файла:", err);
-      if (err.name === "NoSuchKey") {
-        res.status(404).send("Файл не найден");
-      } else {
-        res.status(500).send("Ошибка сервера при чтении файла");
-      }
+     
   }
 }
 
@@ -667,12 +663,12 @@ async function handleAudioFileRequest({ req, res, pathname, env }) {
     return true;
   }
 
-  const requestedFileName = decodeURIComponent(pathname.slice(AUDIO_PUBLIC_PATH_PREFIX.length));
+  const requestedFileName = decodeURIComponent(pathname);
   if (!requestedFileName || requestedFileName.includes('/') || requestedFileName.includes('..')) {
     sendJson(res, 400, { error: 'Invalid file path' });
     return true;
   }
-
+  
   const storagePath =  requestedFileName; //join(resolveAudioStorageDir(env), requestedFileName);
 
   try {
@@ -694,7 +690,7 @@ async function handleDiscussionImageFileRequest({ req, res, pathname, env }) {
     return true;
   }
 
-  const requestedFileName = decodeURIComponent(pathname.slice(DISCUSSION_PUBLIC_PATH_PREFIX.length));
+  const requestedFileName = decodeURIComponent(pathname);
   if (!requestedFileName || requestedFileName.includes('/') || requestedFileName.includes('..')) {
     sendJson(res, 400, { error: 'Invalid file path' });
     return true;
@@ -721,7 +717,7 @@ async function handleProfileImageFileRequest({ req, res, pathname, env }) {
     return true;
   }
 
-  const requestedFileName = decodeURIComponent(pathname.slice(PROFILE_PUBLIC_PATH_PREFIX.length));
+  const requestedFileName = decodeURIComponent(pathname);
   if (!requestedFileName || requestedFileName.includes('/') || requestedFileName.includes('..')) {
     sendJson(res, 400, { error: 'Invalid file path' });
     return true;
@@ -748,7 +744,7 @@ async function handleWorkMediaFileRequest({ req, res, pathname, env }) {
     return true;
   }
 
-  const requestedFileName = decodeURIComponent(pathname.slice(WORK_MEDIA_PUBLIC_PATH_PREFIX.length));
+  const requestedFileName = decodeURIComponent(pathname);
   if (!requestedFileName || requestedFileName.includes('/') || requestedFileName.includes('..')) {
     sendJson(res, 400, { error: 'Invalid file path' });
     return true;
