@@ -487,7 +487,7 @@ async function handleRadioUploadRequest({ req, res, pathname, repo, jwtSecret, a
     await mkdir(storageDir, { recursive: true });
 
     const storedFileName = `${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
-    const storagePath = join(storageDir, storedFileName);
+    const storagePath = join(AUDIO_PUBLIC_PATH_PREFIX, storedFileName);
     await uploadFile(storagePath, fileBuffer, body?.mimeType);
 
     const currentUser = context.currentUser;
@@ -589,7 +589,7 @@ async function handleProfileImageUploadRequest({ req, res, pathname, repo, jwtSe
     await mkdir(storageDir, { recursive: true });
 
     const storedFileName = `${kind}-${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
-    const storagePath = join(storageDir, storedFileName);
+    const storagePath = join(PROFILE_PUBLIC_PATH_PREFIX, storedFileName);
     await  uploadFile(storagePath, fileBuffer, body?.mimeType);
 
     const imageUrl = `${resolvePublicBaseUrl(req, env)}${PROFILE_PUBLIC_PATH_PREFIX}${storedFileName}`;
@@ -639,10 +639,11 @@ async function handleWorkMediaUploadRequest({ req, res, pathname, repo, jwtSecre
 
     const kindPrefix = kind === 'audio' ? 'work-audio' : 'work-pdf';
     const storedFileName = `${kindPrefix}-${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
-    const storagePath = join(storageDir, storedFileName);
-    await uploadFile(storagePath, fileBuffer, body?.mimeType);
-
     const publicPrefix = kind === 'audio' ? AUDIO_PUBLIC_PATH_PREFIX : WORK_MEDIA_PUBLIC_PATH_PREFIX;
+
+    const storagePath = join(publicPrefix, storedFileName);
+    await uploadFile(storagePath, fileBuffer, body?.mimeType);
+    
     const publicUrl = `${resolvePublicBaseUrl(req, env)}${publicPrefix}${storedFileName}`;
     sendJson(res, 201, {
       ok: true,
