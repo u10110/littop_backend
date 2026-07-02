@@ -585,8 +585,6 @@ async function handleProfileImageUploadRequest({ req, res, pathname, repo, jwtSe
       mimeType: body?.mimeType,
       fileName: body?.fileName,
     });
-    const storageDir = resolveProfileStorageDir(env);
-    await mkdir(storageDir, { recursive: true });
 
     const storedFileName = `${kind}-${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
     const storagePath = join(PROFILE_PUBLIC_PATH_PREFIX, storedFileName);
@@ -634,9 +632,7 @@ async function handleWorkMediaUploadRequest({ req, res, pathname, repo, jwtSecre
       mimeType: body?.mimeType,
       fileName: body?.fileName,
     });
-    const storageDir = kind === 'audio' ? resolveAudioStorageDir(env) : resolveWorkMediaStorageDir(env);
-    await mkdir(storageDir, { recursive: true });
-
+ 
     const kindPrefix = kind === 'audio' ? 'work-audio' : 'work-pdf';
     const storedFileName = `${kindPrefix}-${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
     const publicPrefix = kind === 'audio' ? AUDIO_PUBLIC_PATH_PREFIX : WORK_MEDIA_PUBLIC_PATH_PREFIX;
@@ -677,7 +673,7 @@ async function handleAudioFileRequest({ req, res, pathname, env }) {
     return true;
   }
 
-  const storagePath = join(resolveAudioStorageDir(env), requestedFileName);
+  const storagePath =  requestedFileName; //join(resolveAudioStorageDir(env), requestedFileName);
 
   try {
     downloadFile(storagePath, res);
@@ -704,7 +700,7 @@ async function handleDiscussionImageFileRequest({ req, res, pathname, env }) {
     return true;
   }
 
-  const storagePath = join(resolveDiscussionStorageDir(env), requestedFileName);
+  const storagePath =  requestedFileNamejoin(resolveDiscussionStorageDir(env), requestedFileName);
 
   try {
     downloadFile(storagePath, res);
@@ -731,7 +727,7 @@ async function handleProfileImageFileRequest({ req, res, pathname, env }) {
     return true;
   }
 
-  const storagePath = join(resolveProfileStorageDir(env), requestedFileName);
+  const storagePath = requestedFileName; //join(resolveProfileStorageDir(env), requestedFileName);
 
   try {
     downloadFile(storagePath, res);
@@ -758,7 +754,7 @@ async function handleWorkMediaFileRequest({ req, res, pathname, env }) {
     return true;
   }
 
-  const storagePath = join(resolveWorkMediaStorageDir(env), requestedFileName);
+  const storagePath = requestedFileName; //join(resolveWorkMediaStorageDir(env), requestedFileName);
 
   try {
     downloadFile(storagePath, res);
