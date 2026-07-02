@@ -14,20 +14,11 @@ const typeDefs = `#graphql
     database: Boolean!
   }
 
-  type AuthorProfileLink {
-    label: String!
-    url: String!
-  }
-
   type AuthorProfile {
     displayName: String!
     bio: String
     avatarUrl: String
     coverImageUrl: String
-    coverImagePositionX: Float!
-    coverImagePositionY: Float!
-    coverImageScale: Float!
-    profileLinks: [AuthorProfileLink!]!
     city: String
     websiteUrl: String
     birthDate: String
@@ -61,10 +52,6 @@ const typeDefs = `#graphql
     bio: String
     avatarUrl: String
     coverImageUrl: String
-    coverImagePositionX: Float!
-    coverImagePositionY: Float!
-    coverImageScale: Float!
-    profileLinks: [AuthorProfileLink!]!
     city: String
     websiteUrl: String
     birthDate: String
@@ -233,14 +220,6 @@ const typeDefs = `#graphql
     recipient: Author!
   }
 
-  type AuthorRatingEvent {
-    id: ID!
-    eventType: String!
-    points: Int!
-    createdAt: String!
-    label: String!
-  }
-
   type WorkViewer {
     id: ID!
     workId: ID!
@@ -333,29 +312,11 @@ const typeDefs = `#graphql
     body: String!
   }
 
-  input AuthorProfileLinkInput {
-    label: String!
-    url: String!
-  }
-
   input UpdateMyProfileInput {
     displayName: String!
     bio: String
     avatarUrl: String
     coverImageUrl: String
-    coverImagePositionX: Float
-    coverImagePositionY: Float
-    coverImageScale: Float
-    profileLinks: [AuthorProfileLinkInput!]
-    city: String
-    websiteUrl: String
-    birthDate: String
-  }
-
-  input CreateManagedAuthorInput {
-    login: String!
-    displayName: String!
-    bio: String
     city: String
     websiteUrl: String
     birthDate: String
@@ -391,8 +352,6 @@ const typeDefs = `#graphql
     forumTopic(id: ID, slug: String): ForumTopic
     privateDialogs(limit: Int = 50): [PrivateDialog!]!
     privateMessages(withUserId: ID, withLogin: String, limit: Int = 100): [PrivateMessage!]!
-    myManagedAuthors(limit: Int = 100): [Author!]!
-    myRatingEvents(limit: Int = 50): [AuthorRatingEvent!]!
     contests(status: String, scope: String, limit: Int = 20, offset: Int = 0): [Contest!]!
     radioTracks(limit: Int = 20, offset: Int = 0): [RadioTrack!]!
   }
@@ -406,8 +365,6 @@ const typeDefs = `#graphql
     touchPresence: User!
     updateMyProfile(input: UpdateMyProfileInput!): User!
     adminUpdateAuthorProfile(authorId: ID!, input: UpdateMyProfileInput!): Author!
-    adminCreateManagedAuthor(input: CreateManagedAuthorInput!): Author!
-    adminSwitchManagedAuthor(managedUserId: ID!): AuthPayload!
     closeMyAccount: Boolean!
     createWork(input: CreateWorkInput!): Work!
     adminCreateWork(authorId: ID!, input: CreateWorkInput!): Work!
@@ -480,23 +437,6 @@ function deletedAccountReopenUntil(user) {
   const deletedAt = Date.parse(String(user?.deletedAt ?? ''));
   if (!Number.isFinite(deletedAt)) return null;
   return new Date(deletedAt + ACCOUNT_REOPEN_WINDOW_MS).toISOString();
-}
-
-function buildAbsoluteUrl(baseUrl, path) {
-  try {
-    return new URL(path, baseUrl || 'http://localhost:5173').toString();
-  } catch {
-    return '';
-  }
-}
-
-async function sendMailerSafely(mailer, fn) {
-  if (!mailer?.enabled || typeof fn !== 'function') return;
-  try {
-    await fn();
-  } catch {
-    // Почтовая отправка не должна валить основную операцию.
-  }
 }
 
 function issuePasswordResetToken(user, secret) {
@@ -594,14 +534,6 @@ const resolvers = {
     forumTopic: async (_, args, { repo }) => repo.getForumTopic(args),
     privateDialogs: async (_, args, { repo, currentUser }) => repo.listPrivateDialogs({ ...args, userId: requireAuth(currentUser).id }),
     privateMessages: async (_, args, { repo, currentUser }) => repo.listPrivateMessages({ ...args, userId: requireAuth(currentUser).id }),
-    myManagedAuthors: async (_, args, { repo, currentUser, adminUserIds }) => {
-      const user = requireAuth(currentUser);
-      if (!isAdminUser(user, adminUserIds)) {
-        throw new GraphQLError('Only admin can inspect managed accounts', { extensions: { code: 'FORBIDDEN' } });
-      }
-      return repo.listManagedAuthorAccounts({ ownerUserId: user.id, limit: args.limit ?? 100 });
-    },
-    myRatingEvents: async (_, args, { repo, currentUser }) => repo.listUserRatingEvents({ userId: requireAuth(currentUser).id, limit: args.limit ?? 50 }),
     contests: async (_, args, { repo }) => repo.listContests(args),
     radioTracks: async (_, args, { repo }) => repo.listRadioTracks(args),
   },
@@ -750,10 +682,6 @@ const resolvers = {
         bio: input.bio,
         avatarUrl: input.avatarUrl,
         coverImageUrl: input.coverImageUrl,
-        coverImagePositionX: input.coverImagePositionX,
-        coverImagePositionY: input.coverImagePositionY,
-        coverImageScale: input.coverImageScale,
-        profileLinks: input.profileLinks,
         city: input.city,
         websiteUrl: input.websiteUrl,
         birthDate: input.birthDate,
@@ -778,47 +706,10 @@ const resolvers = {
         bio: input.bio,
         avatarUrl: input.avatarUrl,
         coverImageUrl: input.coverImageUrl,
-        coverImagePositionX: input.coverImagePositionX,
-        coverImagePositionY: input.coverImagePositionY,
-        coverImageScale: input.coverImageScale,
-        profileLinks: input.profileLinks,
         city: input.city,
         websiteUrl: input.websiteUrl,
-        birthDate: input.birthDate,
       });
       return repo.getAuthor({ id: authorId });
-    },
-    adminCreateManagedAuthor: async (_, { input }, { currentUser, repo, adminUserIds }) => {
-      const user = requireAuth(currentUser);
-      if (!isAdminUser(user, adminUserIds)) {
-        throw new GraphQLError('Only admin can create managed accounts', { extensions: { code: 'FORBIDDEN' } });
-      }
-      const displayName = typeof input.displayName === 'string' ? input.displayName.trim() : '';
-      const login = typeof input.login === 'string' ? input.login.trim() : '';
-      if (!displayName || !login) {
-        throw new GraphQLError('Login and display name are required', { extensions: { code: 'BAD_USER_INPUT' } });
-      }
-      return repo.createManagedAuthorAccount({
-        ownerUserId: user.id,
-        login,
-        displayName,
-        bio: input.bio,
-        city: input.city,
-        websiteUrl: input.websiteUrl,
-        birthDate: input.birthDate,
-      });
-    },
-    adminSwitchManagedAuthor: async (_, { managedUserId }, { currentUser, repo, adminUserIds, jwtSecret }) => {
-      const user = requireAuth(currentUser);
-      if (!isAdminUser(user, adminUserIds)) {
-        throw new GraphQLError('Only admin can switch into managed accounts', { extensions: { code: 'FORBIDDEN' } });
-      }
-      const allowed = await repo.getManagedAuthorAccount({ ownerUserId: user.id, managedUserId });
-      const managedUser = await repo.getUserById(managedUserId);
-      if (!allowed || !managedUser) {
-        throw new GraphQLError('Managed account not found', { extensions: { code: 'NOT_FOUND' } });
-      }
-      return { token: issueToken(managedUser, jwtSecret), user: managedUser };
     },
     closeMyAccount: async (_, __, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
@@ -868,20 +759,7 @@ const resolvers = {
     },
     addWorkComment: async (_, { workId, body, parentCommentId, imageUrl }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
-      const comment = await repo.addWorkComment({ workId, userId: user.id, body, parentCommentId, imageUrl });
-      const mailer = repo.__notificationMailer;
-      const frontendBaseUrl = repo.__frontendBaseUrl;
-      const work = await repo.getWorkById(workId);
-      if (work?.author?.email && String(work.author.id) !== String(user.id)) {
-        await sendMailerSafely(mailer, () => mailer.sendWorkReplyEmail({
-          to: work.author.email,
-          recipientName: work.author.displayName || work.author.login,
-          senderName: comment?.author?.displayName || comment?.author?.login || user.login,
-          workTitle: work.title,
-          workUrl: buildAbsoluteUrl(frontendBaseUrl, `/works/${work.slug || work.id}`),
-        }));
-      }
-      return comment;
+      return repo.addWorkComment({ workId, userId: user.id, body, parentCommentId, imageUrl });
     },
     updateWorkComment: async (_, { commentId, body, imageUrl }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
@@ -916,20 +794,7 @@ const resolvers = {
     },
     createForumPost: async (_, { topicId, body, parentPostId, imageUrl }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
-      const post = await repo.createForumPost({ topicId, body, parentPostId, imageUrl, authorUserId: user.id });
-      const mailer = repo.__notificationMailer;
-      const frontendBaseUrl = repo.__frontendBaseUrl;
-      const topic = await repo.getForumTopic({ id: topicId });
-      if (topic?.author?.email && String(topic.author.id) !== String(user.id)) {
-        await sendMailerSafely(mailer, () => mailer.sendForumMessageEmail({
-          to: topic.author.email,
-          recipientName: topic.author.displayName || topic.author.login,
-          senderName: post?.author?.displayName || post?.author?.login || user.login,
-          topicTitle: topic.title,
-          topicUrl: buildAbsoluteUrl(frontendBaseUrl, `/forum/${topic.slug || topic.id}`),
-        }));
-      }
-      return post;
+      return repo.createForumPost({ topicId, body, parentPostId, imageUrl, authorUserId: user.id });
     },
     updateForumPost: async (_, { postId, body, imageUrl }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
@@ -941,19 +806,7 @@ const resolvers = {
     },
     sendPrivateMessage: async (_, { recipientUserId, recipientLogin, body }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
-      const message = await repo.sendPrivateMessage({ senderUserId: user.id, recipientUserId, recipientLogin, body });
-      const mailer = repo.__notificationMailer;
-      const frontendBaseUrl = repo.__frontendBaseUrl;
-      if (message?.recipient?.email && String(message.recipient.id) !== String(user.id)) {
-        await sendMailerSafely(mailer, () => mailer.sendPrivateMessageEmail({
-          to: message.recipient.email,
-          recipientName: message.recipient.displayName || message.recipient.login,
-          senderName: message.sender?.displayName || message.sender?.login || user.login,
-          messageText: body,
-          dialogUrl: buildAbsoluteUrl(frontendBaseUrl, `/messages?with=${encodeURIComponent(user.login)}`),
-        }));
-      }
-      return message;
+      return repo.sendPrivateMessage({ senderUserId: user.id, recipientUserId, recipientLogin, body });
     },
     markPrivateMessagesRead: async (_, { withUserId, withLogin }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
@@ -962,16 +815,6 @@ const resolvers = {
   },
   Author: {
     isOnline: (parent) => resolveOnlineFlag(parent),
-    coverImagePositionX: async (parent, _, { repo }) => parent?.coverImagePositionX ?? (await repo.getAuthor({ id: parent.id }))?.coverImagePositionX ?? 50,
-    coverImagePositionY: async (parent, _, { repo }) => parent?.coverImagePositionY ?? (await repo.getAuthor({ id: parent.id }))?.coverImagePositionY ?? 50,
-    coverImageScale: async (parent, _, { repo }) => parent?.coverImageScale ?? (await repo.getAuthor({ id: parent.id }))?.coverImageScale ?? 1,
-    profileLinks: async (parent, _, { repo }) => Array.isArray(parent?.profileLinks) ? parent.profileLinks : repo.getAuthorProfileLinks(parent.id),
-  },
-  AuthorProfile: {
-    coverImagePositionX: (parent) => Number(parent?.coverImagePositionX ?? 50),
-    coverImagePositionY: (parent) => Number(parent?.coverImagePositionY ?? 50),
-    coverImageScale: (parent) => Number(parent?.coverImageScale ?? 1),
-    profileLinks: async (parent, _, { repo }) => Array.isArray(parent?.profileLinks) ? parent.profileLinks : repo.getAuthorProfileLinks(parent?.userId),
   },
   User: {
     isOnline: (parent) => resolveOnlineFlag(parent),
@@ -1017,8 +860,6 @@ export function createApolloServer({ repo, jwtSecret, adminUserIds = new Set(), 
     frontendBaseUrl,
     mailer,
   };
-  repo.__notificationMailer = mailer;
-  repo.__frontendBaseUrl = frontendBaseUrl;
   return new ApolloServer({
     typeDefs,
     resolvers,

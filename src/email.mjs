@@ -306,5 +306,33 @@ export function createMailer(env = process.env) {
         text,
       });
     },
+    async sendPrivateMessageEmail({ to, recipientName, senderName, messageText, dialogUrl = '' }) {
+      const text = [
+        `Здравствуйте, ${cleanText(recipientName) || 'Автор'}!`,
+        '',
+        `Вам пришло новое личное сообщение от ${cleanText(senderName) || 'другого автора'}.`,
+        messageText ? `Текст сообщения: ${cleanText(messageText)}` : '',
+        dialogUrl ? `Открыть диалог: ${dialogUrl}` : '',
+      ].filter(Boolean).join('\n');
+      await sendMessage({ to, subject: 'Littop — новое личное сообщение', text });
+    },
+    async sendWorkReplyEmail({ to, recipientName, senderName, workTitle, workUrl = '' }) {
+      const text = [
+        `Здравствуйте, ${cleanText(recipientName) || 'Автор'}!`,
+        '',
+        `${cleanText(senderName) || 'Другой автор'} оставил(а) новый отклик на произведение${cleanText(workTitle) ? ` «${cleanText(workTitle)}»` : ''}.`,
+        workUrl ? `Открыть произведение: ${workUrl}` : '',
+      ].filter(Boolean).join('\n');
+      await sendMessage({ to, subject: 'Littop — вам ответили на произведение', text });
+    },
+    async sendForumMessageEmail({ to, recipientName, senderName, topicTitle, topicUrl = '' }) {
+      const text = [
+        `Здравствуйте, ${cleanText(recipientName) || 'Автор'}!`,
+        '',
+        `${cleanText(senderName) || 'Другой автор'} оставил(а) новое сообщение на форуме${cleanText(topicTitle) ? ` в теме «${cleanText(topicTitle)}»` : ''}.`,
+        topicUrl ? `Открыть тему: ${topicUrl}` : '',
+      ].filter(Boolean).join('\n');
+      await sendMessage({ to, subject: 'Littop — новое сообщение на форуме', text });
+    },
   };
 }

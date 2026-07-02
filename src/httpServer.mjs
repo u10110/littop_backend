@@ -161,28 +161,58 @@ function sanitizeStoredBaseName(filename) {
     .slice(0, 80) || 'track';
 }
 
-async function downloadFile(storagePath, res) {
-  const command = new GetObjectCommand({
-    Bucket: "littop",
-    Key: storagePath, // Путь к файлу в бакете
-  });
+function isS3UploadEnabled(env) {
+  return String(env.S3_UPLOADS_ENABLED || '').trim().toLowerCase() === 'true';
+}
 
-  try {
-    const s3Response = await s3.send(command);
-
-    // 1. Копируем тип контента из S3 (audio/mpeg, application/pdf и т.д.)
-    res.setHeader("Content-Type", s3Response.ContentType);
-    
-    // 2. Говорим браузеру открыть файл встроенными средствами (inline)
-    res.setHeader("Content-Disposition", "inline");
-
-    // 3. Перенаправляем поток данных из S3 напрямую клиенту
-    s3Response.Body.pipe(res);
-
-  } catch (err) {
-    console.error("Ошибка при поиске файла:", err);
-     
+function resolveRequestedStoredFileName(pathname, prefix) {
+  const relative = decodeURIComponent(pathname).slice(prefix.length);
+  const normalized = String(relative || '').trim();
+  if (!normalized || normalized.includes('..') || normalized.includes('/') || normalized.includes('\\')) {
+    throw new Error('Invalid file path');
   }
+  return normalized;
+}
+
+async function uploadFile(storagePath, fileBuffer, mimeType, { env, localPath } = {}) {
+  if (!isS3UploadEnabled(env)) {
+    if (!localPath) throw new Error('Local upload path is required');
+    await mkdir(resolve(localPath, '..'), { recursive: true });
+    await writeFile(localPath, fileBuffer);
+    return { mode: 'local', path: localPath };
+  }
+
+  const command = new PutObjectCommand({
+    Bucket: 'littop',
+    Key: storagePath,
+    Body: fileBuffer,
+    ContentType: mimeType,
+  });
+  await s3.send(command);
+  return { mode: 's3', key: storagePath };
+}
+
+async function downloadFile(storagePath, res, { env, localPath, contentType } = {}) {
+  if (!isS3UploadEnabled(env)) {
+    if (!localPath) throw new Error('Local file path is required');
+    await stat(localPath);
+    if (contentType) {
+      res.setHeader('Content-Type', contentType);
+    }
+    res.setHeader('Content-Disposition', 'inline');
+    return await pipeline(createReadStream(localPath), res);
+  }
+
+  const command = new GetObjectCommand({
+    Bucket: 'littop',
+    Key: storagePath,
+  });
+  const s3Response = await s3.send(command);
+  if (s3Response.ContentType) {
+    res.setHeader('Content-Type', s3Response.ContentType);
+  }
+  res.setHeader('Content-Disposition', 'inline');
+  return await pipeline(s3Response.Body, res);
 }
 
 
@@ -433,23 +463,6 @@ async function handleSocialAuthRequest({ req, res, pathname, searchParams, repo,
   return true;
 }
 
-async function uploadFile(storagePath, fileStream, mimeType) {
-
-  const command = new PutObjectCommand({
-    Bucket: "littop",
-    Key: storagePath, // Путь, по которому файл сохранится в бакете
-    Body: fileStream,
-    ContentType: mimeType,
-  });
-
-  try {
-    const response = await s3.send(command);
-    console.log("Файл успешно загружен!", response);
-  } catch (err) {
-    console.error("Ошибка загрузки:", err);
-  }
-}
-
 async function handleRadioUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env }) {
   if (pathname !== AUDIO_UPLOAD_ENDPOINT) {
     return false;
@@ -483,8 +496,9 @@ async function handleRadioUploadRequest({ req, res, pathname, repo, jwtSecret, a
     await mkdir(storageDir, { recursive: true });
 
     const storedFileName = `${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
-    const storagePath = join(AUDIO_PUBLIC_PATH_PREFIX, storedFileName);
-    await uploadFile(storagePath, fileBuffer, body?.mimeType);
+    const storagePath = `${AUDIO_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    const localPath = join(storageDir, storedFileName);
+    await uploadFile(storagePath, fileBuffer, body?.mimeType, { env, localPath });
 
     const currentUser = context.currentUser;
     const publicUrl = `${resolvePublicBaseUrl(req, env)}${AUDIO_PUBLIC_PATH_PREFIX}${storedFileName}`;
@@ -582,9 +596,12 @@ async function handleProfileImageUploadRequest({ req, res, pathname, repo, jwtSe
       fileName: body?.fileName,
     });
 
+    const storageDir = resolveProfileStorageDir(env);
+    await mkdir(storageDir, { recursive: true });
     const storedFileName = `${kind}-${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
-    const storagePath = join(PROFILE_PUBLIC_PATH_PREFIX, storedFileName);
-    await  uploadFile(storagePath, fileBuffer, body?.mimeType);
+    const storagePath = `${PROFILE_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    const localPath = join(storageDir, storedFileName);
+    await uploadFile(storagePath, fileBuffer, body?.mimeType, { env, localPath });
 
     const imageUrl = `${resolvePublicBaseUrl(req, env)}${PROFILE_PUBLIC_PATH_PREFIX}${storedFileName}`;
     sendJson(res, 201, {
@@ -632,9 +649,11 @@ async function handleWorkMediaUploadRequest({ req, res, pathname, repo, jwtSecre
     const kindPrefix = kind === 'audio' ? 'work-audio' : 'work-pdf';
     const storedFileName = `${kindPrefix}-${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
     const publicPrefix = kind === 'audio' ? AUDIO_PUBLIC_PATH_PREFIX : WORK_MEDIA_PUBLIC_PATH_PREFIX;
-
-    const storagePath = join(publicPrefix, storedFileName);
-    await uploadFile(storagePath, fileBuffer, body?.mimeType);
+    const storageDir = kind === 'audio' ? resolveAudioStorageDir(env) : resolveWorkMediaStorageDir(env);
+    await mkdir(storageDir, { recursive: true });
+    const storagePath = `${publicPrefix}${storedFileName}`;
+    const localPath = join(storageDir, storedFileName);
+    await uploadFile(storagePath, fileBuffer, body?.mimeType, { env, localPath });
     
     const publicUrl = `${resolvePublicBaseUrl(req, env)}${publicPrefix}${storedFileName}`;
     sendJson(res, 201, {
@@ -663,16 +682,12 @@ async function handleAudioFileRequest({ req, res, pathname, env }) {
     return true;
   }
 
-  const requestedFileName = decodeURIComponent(pathname);
-  if (!requestedFileName || requestedFileName.includes('..')) {
-    sendJson(res, 400, { error: 'Invalid file path' });
-    return true;
-  }
-  
-  const storagePath =  requestedFileName; //join(resolveAudioStorageDir(env), requestedFileName);
-
   try {
-    downloadFile(storagePath, res);
+    const storedFileName = resolveRequestedStoredFileName(pathname, AUDIO_PUBLIC_PATH_PREFIX);
+    const storagePath = `${AUDIO_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    const localPath = join(resolveAudioStorageDir(env), storedFileName);
+    const contentType = AUDIO_CONTENT_TYPE_BY_EXTENSION[extname(storedFileName).toLowerCase()] || 'application/octet-stream';
+    await downloadFile(storagePath, res, { env, localPath, contentType });
   } catch {
     sendJson(res, 404, { error: 'Audio file not found' });
   }
@@ -690,16 +705,12 @@ async function handleDiscussionImageFileRequest({ req, res, pathname, env }) {
     return true;
   }
 
-  const requestedFileName = decodeURIComponent(pathname);
-  if (!requestedFileName || requestedFileName.includes('..')) {
-    sendJson(res, 400, { error: 'Invalid file path' });
-    return true;
-  }
-
-  const storagePath =  requestedFileNamejoin(resolveDiscussionStorageDir(env), requestedFileName);
-
   try {
-    downloadFile(storagePath, res);
+    const storedFileName = resolveRequestedStoredFileName(pathname, DISCUSSION_PUBLIC_PATH_PREFIX);
+    const storagePath = `${DISCUSSION_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    const localPath = join(resolveDiscussionStorageDir(env), storedFileName);
+    const contentType = IMAGE_CONTENT_TYPE_BY_EXTENSION[extname(storedFileName).toLowerCase()] || 'application/octet-stream';
+    await downloadFile(storagePath, res, { env, localPath, contentType });
   } catch {
     sendJson(res, 404, { error: 'Discussion image not found' });
   }
@@ -717,16 +728,12 @@ async function handleProfileImageFileRequest({ req, res, pathname, env }) {
     return true;
   }
 
-  const requestedFileName = decodeURIComponent(pathname);
-  if (!requestedFileName  || requestedFileName.includes('..')) {
-    sendJson(res, 400, { error: 'Invalid file path' });
-    return true;
-  }
-
-  const storagePath = requestedFileName; //join(resolveProfileStorageDir(env), requestedFileName);
-
   try {
-    downloadFile(storagePath, res);
+    const storedFileName = resolveRequestedStoredFileName(pathname, PROFILE_PUBLIC_PATH_PREFIX);
+    const storagePath = `${PROFILE_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    const localPath = join(resolveProfileStorageDir(env), storedFileName);
+    const contentType = IMAGE_CONTENT_TYPE_BY_EXTENSION[extname(storedFileName).toLowerCase()] || 'application/octet-stream';
+    await downloadFile(storagePath, res, { env, localPath, contentType });
   } catch {
     sendJson(res, 404, { error: 'Profile image not found' });
   }
@@ -744,16 +751,12 @@ async function handleWorkMediaFileRequest({ req, res, pathname, env }) {
     return true;
   }
 
-  const requestedFileName = decodeURIComponent(pathname);
-  if (!requestedFileName ||  requestedFileName.includes('..')) {
-    sendJson(res, 400, { error: 'Invalid file path' });
-    return true;
-  }
-
-  const storagePath = requestedFileName; //join(resolveWorkMediaStorageDir(env), requestedFileName);
-
   try {
-    downloadFile(storagePath, res);
+    const storedFileName = resolveRequestedStoredFileName(pathname, WORK_MEDIA_PUBLIC_PATH_PREFIX);
+    const storagePath = `${WORK_MEDIA_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    const localPath = join(resolveWorkMediaStorageDir(env), storedFileName);
+    const contentType = WORK_MEDIA_CONTENT_TYPE_BY_EXTENSION[extname(storedFileName).toLowerCase()] || 'application/octet-stream';
+    await downloadFile(storagePath, res, { env, localPath, contentType });
   } catch {
     sendJson(res, 404, { error: 'Work media file not found' });
   }
