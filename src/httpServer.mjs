@@ -664,7 +664,7 @@ async function handleAudioFileRequest({ req, res, pathname, env }) {
   }
 
   const requestedFileName = decodeURIComponent(pathname);
-  if (!requestedFileName || requestedFileName.includes('/') || requestedFileName.includes('..')) {
+  if (!requestedFileName || requestedFileName.includes('..')) {
     sendJson(res, 400, { error: 'Invalid file path' });
     return true;
   }
@@ -691,7 +691,7 @@ async function handleDiscussionImageFileRequest({ req, res, pathname, env }) {
   }
 
   const requestedFileName = decodeURIComponent(pathname);
-  if (!requestedFileName || requestedFileName.includes('/') || requestedFileName.includes('..')) {
+  if (!requestedFileName || requestedFileName.includes('..')) {
     sendJson(res, 400, { error: 'Invalid file path' });
     return true;
   }
@@ -718,7 +718,7 @@ async function handleProfileImageFileRequest({ req, res, pathname, env }) {
   }
 
   const requestedFileName = decodeURIComponent(pathname);
-  if (!requestedFileName || requestedFileName.includes('/') || requestedFileName.includes('..')) {
+  if (!requestedFileName  || requestedFileName.includes('..')) {
     sendJson(res, 400, { error: 'Invalid file path' });
     return true;
   }
@@ -745,7 +745,7 @@ async function handleWorkMediaFileRequest({ req, res, pathname, env }) {
   }
 
   const requestedFileName = decodeURIComponent(pathname);
-  if (!requestedFileName || requestedFileName.includes('/') || requestedFileName.includes('..')) {
+  if (!requestedFileName ||  requestedFileName.includes('..')) {
     sendJson(res, 400, { error: 'Invalid file path' });
     return true;
   }
