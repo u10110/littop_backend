@@ -364,8 +364,10 @@ const typeDefs = `#graphql
     reopenClosedAccount(input: LoginInput!): AuthPayload!
     touchPresence: User!
     updateMyProfile(input: UpdateMyProfileInput!): User!
+    adminUpdateAuthorProfile(authorId: ID!, input: UpdateMyProfileInput!): Author!
     closeMyAccount: Boolean!
     createWork(input: CreateWorkInput!): Work!
+    adminCreateWork(authorId: ID!, input: CreateWorkInput!): Work!
     updateWork(workId: ID!, input: UpdateWorkInput!): Work!
     deleteWork(workId: ID!): Work!
     activateWorkAnnouncement(workId: ID!): Work!
@@ -685,6 +687,30 @@ const resolvers = {
         birthDate: input.birthDate,
       });
     },
+    adminUpdateAuthorProfile: async (_, { authorId, input }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      if (!isAdminUser(user, adminUserIds)) {
+        throw new GraphQLError('Only admin can edit classic author pages', {
+          extensions: { code: 'FORBIDDEN' },
+        });
+      }
+      const displayName = typeof input.displayName === 'string' ? input.displayName.trim() : '';
+      if (!displayName) {
+        throw new GraphQLError('Display name is required', {
+          extensions: { code: 'BAD_USER_INPUT' },
+        });
+      }
+      await repo.updateUserProfile({
+        userId: authorId,
+        displayName,
+        bio: input.bio,
+        avatarUrl: input.avatarUrl,
+        coverImageUrl: input.coverImageUrl,
+        city: input.city,
+        websiteUrl: input.websiteUrl,
+      });
+      return repo.getAuthor({ id: authorId });
+    },
     closeMyAccount: async (_, __, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
       return repo.closeUserAccount({ userId: user.id });
@@ -692,6 +718,15 @@ const resolvers = {
     createWork: async (_, { input }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
       return repo.createWork({ ...input, authorUserId: user.id });
+    },
+    adminCreateWork: async (_, { authorId, input }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      if (!isAdminUser(user, adminUserIds)) {
+        throw new GraphQLError('Only admin can publish works for classic author pages', {
+          extensions: { code: 'FORBIDDEN' },
+        });
+      }
+      return repo.createWork({ ...input, authorUserId: authorId });
     },
     updateWork: async (_, { workId, input }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);

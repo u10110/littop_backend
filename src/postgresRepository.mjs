@@ -620,7 +620,7 @@ export function createPostgresRepository(pool) {
           `
           insert into users (email, login, password_hash, terms_accepted_at, terms_version)
           values ($1, $2, $3, $4, $5)
-          returning id
+          returning id, author_user_id
           `,
           [email, login, passwordHash, termsAcceptedAt, normalizeOptionalText(termsVersion)],
         );
@@ -1889,6 +1889,7 @@ export function createPostgresRepository(pool) {
         `
         select w.*, ws.code as section_code, wg.slug as genre_slug,
                (select count(*)::int from work_likes wl where wl.work_id = w.id) as likes_count,
+               exists(select 1 from work_announcements wa where wa.work_id = w.id) as announcement_active,
                (select count(*)::int from public.work_dislikes wd where wd.work_id = w.id) as dislikes_count,
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
