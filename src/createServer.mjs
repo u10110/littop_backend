@@ -671,8 +671,7 @@ const resolvers = {
       console.log(user.email)
       if (mailer?.enabled && typeof mailer.sendPasswordResetEmail === 'function') {
         await mailer.sendPasswordResetEmail({
-          email: user.email,
-          login: user.login,
+          to: user.email,
           displayName: user.profile?.displayName || user.login,
           resetUrl,
         });
