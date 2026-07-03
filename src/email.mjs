@@ -292,6 +292,7 @@ export function createMailer(env = process.env) {
       });
     },
     async sendPasswordResetEmail({ to, displayName, resetUrl }) {
+      console.log({ to, displayName,     })
       const normalizedDisplayName = cleanText(displayName) || 'Автор';
       const text = [
         `Здравствуйте, ${normalizedDisplayName}!`,
@@ -302,7 +303,7 @@ export function createMailer(env = process.env) {
         'Ссылка действует 1 час.',
         'Если это были не вы, просто проигнорируйте это письмо.',
       ].join('\n');
-      console.log(to,text)
+   
       await sendMessage({
         to,
         subject: 'Littop — восстановление пароля',
