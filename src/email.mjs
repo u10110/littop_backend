@@ -152,7 +152,7 @@ async function sendSmtpMail({ host, port, secure, user, password, fromEmail, to,
     await upgradeToTls();
     await writeCommand(`EHLO ${localHostName}`, [250]);
   }
-
+  console.log(fromEmail,to)
   await writeCommand('AUTH LOGIN', [334]);
   await writeCommand(Buffer.from(user, 'utf8').toString('base64'), [334]);
   await writeCommand(Buffer.from(password, 'utf8').toString('base64'), [235]);
@@ -256,7 +256,7 @@ export function createMailer(env = process.env) {
 
   async function sendMessage({ to, subject, text }) {
     await ensureConfigured();
-    console.log(fromEmail)
+    
     await sendSmtpMail({
       host,
       port,
