@@ -302,7 +302,7 @@ export function createMailer(env = process.env) {
         'Ссылка действует 1 час.',
         'Если это были не вы, просто проигнорируйте это письмо.',
       ].join('\n');
-
+      
       await sendMessage({
         to,
         subject: 'Littop — восстановление пароля',
