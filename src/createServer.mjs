@@ -668,7 +668,7 @@ const resolvers = {
       const { frontendBaseUrl, mailer } = readPasswordResetConfig(repo);
       const resetToken = issuePasswordResetToken(user, jwtSecret);
       const resetUrl = buildPasswordResetUrl(frontendBaseUrl, resetToken);
-      console.log(user.email)
+
       if (mailer?.enabled && typeof mailer.sendPasswordResetEmail === 'function') {
         await mailer.sendPasswordResetEmail({
           email: user.email,
