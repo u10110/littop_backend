@@ -243,7 +243,7 @@ export function createMailer(env = process.env) {
   const password = cleanText(env.SMTP_PASSWORD);
   const secure = parseBoolean(env.SMTP_SECURE, true);
   const port = Number(env.SMTP_PORT || (secure ? 465 : 587));
-  const fromEmail = cleanText(env.SMTP_FROM_EMAIL) || user;
+  const fromEmail = cleanText(env.SMTP_FROM_EMAIL);
   const enabled = Boolean(host && port && user && password && fromEmail);
 
   async function ensureConfigured() {
