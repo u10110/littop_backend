@@ -292,7 +292,7 @@ export function createMailer(env = process.env) {
       });
     },
     async sendPasswordResetEmail({ to, displayName, resetUrl }) {
-      console.log({ to, displayName,     })
+
       const normalizedDisplayName = cleanText(displayName) || 'Автор';
       const text = [
         `Здравствуйте, ${normalizedDisplayName}!`,
