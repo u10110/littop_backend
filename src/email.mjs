@@ -8,6 +8,7 @@ export const MIN_PASSWORD_LENGTH = 8;
 const PASSWORD_RESET_EXPIRES_IN = '1h';
 
 function cleanText(value) {
+  console.log(typeof value)
   if (typeof value !== 'string') return '';
   return value.trim();
 }
