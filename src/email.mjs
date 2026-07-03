@@ -239,6 +239,7 @@ export function buildPasswordResetUrl(frontendBaseUrl, token) {
 }
 
 export function createMailer(env = process.env) {
+  console.log(env)
   const host = cleanText(env.SMTP_HOST);
   const user = cleanText(env.SMTP_USER);
   const password = cleanText(env.SMTP_PASSWORD);
