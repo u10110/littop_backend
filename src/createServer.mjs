@@ -34,7 +34,10 @@ const typeDefs = `#graphql
     ratingTotal: Float!
     worksCountCached: Int!
     isClassic: Boolean!
+    isMemorialPage: Boolean!
     isFeatured: Boolean!
+    peachBalance: Int!
+    audioUploadSlots: Int!
   }
 
   type User {
@@ -71,6 +74,7 @@ const typeDefs = `#graphql
     ratingTotal: Float!
     worksCountCached: Int!
     isClassic: Boolean!
+    isMemorialPage: Boolean!
     isFeatured: Boolean!
     registeredAt: String!
     lastSeenAt: String
@@ -241,6 +245,26 @@ const typeDefs = `#graphql
     label: String!
   }
 
+  type PeachTransaction {
+    id: ID!
+    amount: Int!
+    kind: String!
+    note: String
+    createdAt: String!
+  }
+
+  type AuthorReviewRequest {
+    id: ID!
+    requesterUserId: ID!
+    workId: ID
+    title: String!
+    message: String
+    status: String!
+    costPeaches: Int!
+    createdAt: String!
+    updatedAt: String!
+  }
+
   type WorkViewer {
     id: ID!
     workId: ID!
@@ -370,7 +394,7 @@ const typeDefs = `#graphql
   type Query {
     health: Health!
     me: User
-    authors(limit: Int = 20, offset: Int = 0, search: String, classicsOnly: Boolean = false, featuredOnly: Boolean = false): [Author!]!
+    authors(limit: Int = 20, offset: Int = 0, search: String, classicsOnly: Boolean = false, memorialOnly: Boolean = false, featuredOnly: Boolean = false): [Author!]!
     onlineAuthors(limit: Int = 12): [Author!]!
     todayVisitors(limit: Int = 12): [Author!]!
     birthdayAuthors(limit: Int = 12): [Author!]!
@@ -393,6 +417,7 @@ const typeDefs = `#graphql
     privateMessages(withUserId: ID, withLogin: String, limit: Int = 100): [PrivateMessage!]!
     myManagedAuthors(limit: Int = 100): [Author!]!
     myRatingEvents(limit: Int = 50): [AuthorRatingEvent!]!
+    myPeachTransactions(limit: Int = 50): [PeachTransaction!]!
     contests(status: String, scope: String, limit: Int = 20, offset: Int = 0): [Contest!]!
     radioTracks(limit: Int = 20, offset: Int = 0): [RadioTrack!]!
   }
@@ -406,8 +431,10 @@ const typeDefs = `#graphql
     touchPresence: User!
     updateMyProfile(input: UpdateMyProfileInput!): User!
     adminUpdateAuthorProfile(authorId: ID!, input: UpdateMyProfileInput!): Author!
+    adminUpdateAuthorPageFlags(authorId: ID!, isClassic: Boolean!, isMemorialPage: Boolean!): Author!
     adminCreateManagedAuthor(input: CreateManagedAuthorInput!): Author!
     adminSwitchManagedAuthor(managedUserId: ID!): AuthPayload!
+    adminGrantPeaches(login: String!, amount: Int!, note: String): User!
     closeMyAccount: Boolean!
     createWork(input: CreateWorkInput!): Work!
     adminCreateWork(authorId: ID!, input: CreateWorkInput!): Work!
@@ -430,6 +457,8 @@ const typeDefs = `#graphql
     deleteForumPost(postId: ID!): ForumPost!
     sendPrivateMessage(recipientUserId: ID, recipientLogin: String, body: String!): PrivateMessage!
     markPrivateMessagesRead(withUserId: ID, withLogin: String): Int!
+    purchaseAudioUploadPack: User!
+    requestAdminReview(workId: ID, title: String!, message: String): AuthorReviewRequest!
   }
 `;
 
@@ -602,6 +631,7 @@ const resolvers = {
       return repo.listManagedAuthorAccounts({ ownerUserId: user.id, limit: args.limit ?? 100 });
     },
     myRatingEvents: async (_, args, { repo, currentUser }) => repo.listUserRatingEvents({ userId: requireAuth(currentUser).id, limit: args.limit ?? 50 }),
+    myPeachTransactions: async (_, args, { repo, currentUser }) => repo.listUserPeachTransactions({ userId: requireAuth(currentUser).id, limit: args.limit ?? 50 }),
     contests: async (_, args, { repo }) => repo.listContests(args),
     radioTracks: async (_, args, { repo }) => repo.listRadioTracks(args),
   },
@@ -787,6 +817,15 @@ const resolvers = {
       });
       return repo.getAuthor({ id: authorId });
     },
+    adminUpdateAuthorPageFlags: async (_, { authorId, isClassic, isMemorialPage }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      if (!isAdminUser(user, adminUserIds)) {
+        throw new GraphQLError('Only admin can change author page flags', {
+          extensions: { code: 'FORBIDDEN' },
+        });
+      }
+      return repo.updateAuthorPageFlags({ authorId, isClassic, isMemorialPage });
+    },
     adminCreateManagedAuthor: async (_, { input }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
       if (!isAdminUser(user, adminUserIds)) {
@@ -818,6 +857,13 @@ const resolvers = {
         throw new GraphQLError('Managed account not found', { extensions: { code: 'NOT_FOUND' } });
       }
       return { token: issueToken(managedUser, jwtSecret), user: managedUser };
+    },
+    adminGrantPeaches: async (_, { login, amount, note }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      if (!isAdminUser(user, adminUserIds)) {
+        throw new GraphQLError('Only admin can grant peaches', { extensions: { code: 'FORBIDDEN' } });
+      }
+      return repo.grantPeachesByLogin({ login, amount, note, grantedByUserId: user.id });
     },
     closeMyAccount: async (_, __, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
@@ -958,15 +1004,27 @@ const resolvers = {
       const user = requireAuth(currentUser);
       return repo.markPrivateMessagesRead({ userId: user.id, withUserId, withLogin });
     },
+    purchaseAudioUploadPack: async (_, __, { currentUser, repo }) => {
+      const user = requireAuth(currentUser);
+      return repo.purchaseAudioUploadPack({ userId: user.id });
+    },
+    requestAdminReview: async (_, { workId, title, message }, { currentUser, repo }) => {
+      const user = requireAuth(currentUser);
+      return repo.createAuthorReviewRequest({ requesterUserId: user.id, workId, title, message });
+    },
   },
   Author: {
     isOnline: (parent) => resolveOnlineFlag(parent),
+    isMemorialPage: (parent) => Boolean(parent?.isMemorialPage),
     coverImagePositionX: async (parent, _, { repo }) => parent?.coverImagePositionX ?? (await repo.getAuthor({ id: parent.id }))?.coverImagePositionX ?? 50,
     coverImagePositionY: async (parent, _, { repo }) => parent?.coverImagePositionY ?? (await repo.getAuthor({ id: parent.id }))?.coverImagePositionY ?? 50,
     coverImageScale: async (parent, _, { repo }) => parent?.coverImageScale ?? (await repo.getAuthor({ id: parent.id }))?.coverImageScale ?? 1,
     profileLinks: async (parent, _, { repo }) => Array.isArray(parent?.profileLinks) ? parent.profileLinks : repo.getAuthorProfileLinks(parent.id),
   },
   AuthorProfile: {
+    isMemorialPage: (parent) => Boolean(parent?.isMemorialPage),
+    peachBalance: (parent) => Number(parent?.peachBalance ?? 0),
+    audioUploadSlots: (parent) => Number(parent?.audioUploadSlots ?? 0),
     coverImagePositionX: (parent) => Number(parent?.coverImagePositionX ?? 50),
     coverImagePositionY: (parent) => Number(parent?.coverImagePositionY ?? 50),
     coverImageScale: (parent) => Number(parent?.coverImageScale ?? 1),

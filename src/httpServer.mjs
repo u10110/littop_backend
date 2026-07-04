@@ -507,6 +507,7 @@ async function handleRadioUploadRequest({ req, res, pathname, repo, jwtSecret, a
       authorName: currentUser?.profile?.displayName || currentUser?.login || 'Автор',
       durationSeconds: body?.durationSeconds,
       audioUrl: publicUrl,
+      creatorUserId: currentUser?.id ?? null,
     });
 
     sendJson(res, 201, {
