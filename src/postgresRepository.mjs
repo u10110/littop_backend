@@ -113,7 +113,7 @@ function workFromRow(row) {
     title: row.title,
     slug: row.slug,
     summary: row.summary,
-    body: escapeHtml(row.body.replace(/<[^>]*>?/gm, '')),
+    body: row.body,
     excerpt: row.excerpt,
     status: row.status,
     sectionCode: row.section_code,
