@@ -1,3 +1,6 @@
+
+import escapeHtml from 'escape-html';
+
 function slugify(value) {
   return String(value ?? '')
     .normalize('NFKD')
@@ -110,7 +113,7 @@ function workFromRow(row) {
     title: row.title,
     slug: row.slug,
     summary: row.summary,
-    body: row.body,
+    body: escapeHtml(row.body.replace(/<[^>]*>?/gm, '')),
     excerpt: row.excerpt,
     status: row.status,
     sectionCode: row.section_code,

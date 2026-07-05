@@ -1,6 +1,7 @@
 import { ApolloServer } from '@apollo/server';
 import { GraphQLError } from 'graphql';
 import jwt from 'jsonwebtoken';
+import moment from 'moment';
 
 import { decodeToken, getCurrentUserFromHeader, hashPassword, issueToken, verifyPassword } from './auth.mjs';
 
@@ -785,7 +786,7 @@ const resolvers = {
         profileLinks: input.profileLinks,
         city: input.city,
         websiteUrl: input.websiteUrl,
-        birthDate: input.birthDate,
+        birthDate: moment.utc(input.birthDate).format(" YYYY-MM-DD") ,
       });
     },
     adminUpdateAuthorProfile: async (_, { authorId, input }, { currentUser, repo, adminUserIds }) => {
