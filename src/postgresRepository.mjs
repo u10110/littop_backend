@@ -802,7 +802,7 @@ export function createPostgresRepository(pool) {
           `
           insert into users (email, login, password_hash, terms_accepted_at, terms_version)
           values ($1, $2, $3, $4, $5)
-          returning id, author_user_id
+          returning id
           `,
           [email, login, passwordHash, termsAcceptedAt, normalizeOptionalText(termsVersion)],
         );
