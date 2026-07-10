@@ -309,6 +309,7 @@ function radioTrackFromRow(row) {
   if (!row) return null;
   return {
     id: row.id,
+    creatorUserId: row.creator_user_id,
     title: row.title,
     authorName: row.author_name,
     durationSeconds: row.duration_seconds == null ? null : Number(row.duration_seconds),
@@ -802,7 +803,7 @@ export function createPostgresRepository(pool) {
           `
           insert into users (email, login, password_hash, terms_accepted_at, terms_version)
           values ($1, $2, $3, $4, $5)
-          returning id, author_user_id
+          returning id
           `,
           [email, login, passwordHash, termsAcceptedAt, normalizeOptionalText(termsVersion)],
         );
@@ -3395,9 +3396,10 @@ export function createPostgresRepository(pool) {
             work_id,
             duration_seconds,
             audio_url,
-            source_url
+            source_url,
+            creator_user_id
           )
-          values ($1, $2, $3, $4, $5, $6)
+          values ($1, $2, $3, $4, $5, $6, $7)
           returning *
           `,
           [
@@ -3407,6 +3409,7 @@ export function createPostgresRepository(pool) {
             normalizedDuration,
             normalizedAudioUrl,
             normalizeOptionalText(sourceUrl),
+            creatorUserId || null,
           ],
         );
         await client.query('commit');
@@ -3417,6 +3420,66 @@ export function createPostgresRepository(pool) {
       } finally {
         client.release();
       }
+    },
+
+    async updateRadioTrack({ id, title, authorName, canManageAll, requestingUserId }) {
+      const { rows: existing } = await pool.query('select * from radio_tracks where id = $1', [id]);
+      if (!existing[0]) throw new Error('Track not found');
+      const track = radioTrackFromRow(existing[0]);
+      if (!canManageAll && String(track.creatorUserId) !== String(requestingUserId)) {
+        throw new Error('Only the track author or the owner can edit this track.');
+      }
+      const nextTitle = title != null ? String(title).trim() : track.title;
+      if (!nextTitle) throw new Error('Title cannot be empty.');
+      const nextAuthor = authorName != null ? normalizeOptionalText(authorName) : track.authorName;
+      const { rows } = await pool.query(
+        'update radio_tracks set title = $1, author_name = $2, updated_at = now() where id = $3 returning *',
+        [nextTitle, nextAuthor, id],
+      );
+      return radioTrackFromRow(rows[0]);
+    },
+
+    async deleteRadioTrack({ id, canManageAll, requestingUserId }) {
+      const { rows: existing } = await pool.query('select * from radio_tracks where id = $1', [id]);
+      if (!existing[0]) throw new Error('Track not found');
+      const track = radioTrackFromRow(existing[0]);
+      if (!canManageAll && String(track.creatorUserId) !== String(requestingUserId)) {
+        throw new Error('Only the track author or the owner can delete this track.');
+      }
+      const { rows } = await pool.query('delete from radio_tracks where id = $1 returning *', [id]);
+      return radioTrackFromRow(rows[0]);
+    },
+
+    async listRadioTracksByCreator({ creatorUserId, limit = 50, offset = 0 } = {}) {
+      const page = buildLimitOffset(limit, offset);
+      const { rows } = await pool.query(
+        `
+        select rt.*,
+               coalesce(avg(rtr.rating), 0)::numeric(4,2) as average_rating,
+               count(rtr.id)::int as ratings_count
+        from radio_tracks rt
+        left join radio_track_ratings rtr on rtr.track_id = rt.id
+        where rt.creator_user_id = $1
+        group by rt.id
+        order by rt.created_at desc
+        limit $2 offset $3
+        `,
+        [creatorUserId, page.limit, page.offset],
+      );
+      return rows.map(radioTrackFromRow);
+    },
+
+    async upsertSiteSetting({ key, value }) {
+      const { rows } = await pool.query(
+        'insert into site_settings (key, value) values ($1, $2) on conflict (key) do update set value = excluded.value returning *',
+        [key, value],
+      );
+      return rows[0];
+    },
+
+    async listSiteSettings() {
+      const { rows } = await pool.query('select key, value from site_settings order by key');
+      return rows;
     },
 
     async listRadioTracks({ limit = 20, offset = 0 } = {}) {

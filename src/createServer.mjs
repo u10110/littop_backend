@@ -295,6 +295,7 @@ const typeDefs = `#graphql
     id: ID!
     title: String!
     authorName: String
+    creatorUserId: ID
     durationSeconds: Int
     audioUrl: String
     sourceUrl: String
@@ -302,6 +303,17 @@ const typeDefs = `#graphql
     ratingsCount: Int!
     createdAt: String!
     updatedAt: String!
+  }
+
+  input RadioTrackUpdateInput {
+    id: ID!
+    title: String
+    authorName: String
+  }
+
+  type SiteSetting {
+    key: String!
+    value: String
   }
 
   type AuthPayload {
@@ -421,6 +433,8 @@ const typeDefs = `#graphql
     myPeachTransactions(limit: Int = 50): [PeachTransaction!]!
     contests(status: String, scope: String, limit: Int = 20, offset: Int = 0): [Contest!]!
     radioTracks(limit: Int = 20, offset: Int = 0): [RadioTrack!]!
+    radioTracksByCreator(creatorUserId: ID!): [RadioTrack!]!
+    siteSettings: [SiteSetting!]!
   }
 
   type Mutation {
@@ -441,6 +455,9 @@ const typeDefs = `#graphql
     adminCreateWork(authorId: ID!, input: CreateWorkInput!): Work!
     updateWork(workId: ID!, input: UpdateWorkInput!): Work!
     deleteWork(workId: ID!): Work!
+    updateRadioTrack(input: RadioTrackUpdateInput!): RadioTrack!
+    deleteRadioTrack(id: ID!): RadioTrack!
+    updateSiteSetting(key: String!, value: String!): SiteSetting!
     activateWorkAnnouncement(workId: ID!): Work!
     toggleWorkLike(workId: ID!): Work!
     toggleWorkDislike(workId: ID!): Work!
@@ -635,6 +652,8 @@ const resolvers = {
     myPeachTransactions: async (_, args, { repo, currentUser }) => repo.listUserPeachTransactions({ userId: requireAuth(currentUser).id, limit: args.limit ?? 50 }),
     contests: async (_, args, { repo }) => repo.listContests(args),
     radioTracks: async (_, args, { repo }) => repo.listRadioTracks(args),
+    radioTracksByCreator: async (_, { creatorUserId }, { repo }) => repo.listRadioTracksByCreator({ creatorUserId }),
+    siteSettings: async (_, __, { repo }) => repo.listSiteSettings(),
   },
   Mutation: {
     register: async (_, { input }, { repo, jwtSecret }) => {
@@ -928,6 +947,20 @@ const resolvers = {
         }));
       }
       return comment;
+    },
+    updateRadioTrack: async (_, { input }, { currentUser, repo, adminUserIds }) => {
+      if (!currentUser) throw new GraphQLError('Auth required', { extensions: { code: 'UNAUTHENTICATED' } });
+      const user = currentUser;
+      return repo.updateRadioTrack({ id: input.id, title: input.title, authorName: input.authorName, canManageAll: isAdminUser(user, adminUserIds), requestingUserId: user.id });
+    },
+    deleteRadioTrack: async (_, { id }, { currentUser, repo, adminUserIds }) => {
+      if (!currentUser) throw new GraphQLError('Auth required', { extensions: { code: 'UNAUTHENTICATED' } });
+      const user = currentUser;
+      return repo.deleteRadioTrack({ id, canManageAll: isAdminUser(user, adminUserIds), requestingUserId: user.id });
+    },
+    updateSiteSetting: async (_, { key, value }, { currentUser, repo, adminUserIds }) => {
+      if (!isAdminUser(currentUser, adminUserIds)) throw new GraphQLError('Only owner can change site settings', { extensions: { code: 'FORBIDDEN' } });
+      return repo.upsertSiteSetting({ key, value });
     },
     updateWorkComment: async (_, { commentId, body, imageUrl }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);

@@ -355,7 +355,10 @@ async function handleGraphqlRequest({ req, res, apolloServer, repo, jwtSecret, a
     }
   }
 
+  try { fs.appendFileSync("/tmp/gql_debug.log", `\n=== ${new Date().toISOString()} ${req.method} ${req.url} ===\nHEADERS: ${JSON.stringify(req.headers)}\n`); } catch {}
   const body = req.method === 'GET' ? undefined : await readJsonBody(req);
+  try { fs.appendFileSync("/tmp/gql_debug.log", `BODY: ${JSON.stringify(body).slice(0,3000)}\n`); } catch {}
+
   const httpGraphQLRequest = {
     method: req.method.toUpperCase(),
     headers,
@@ -367,6 +370,13 @@ async function handleGraphqlRequest({ req, res, apolloServer, repo, jwtSecret, a
     httpGraphQLRequest,
     context: () => buildContext({ req }, { repo, jwtSecret, adminUserIds }),
   });
+  try {
+    if (response.body && response.body.kind === complete) {
+      fs.appendFileSync("/tmp/gql_debug.log", "RESP_BODY: " + response.body.string.slice(0,1500) + "\n");
+    } else {
+      fs.appendFileSync("/tmp/gql_debug.log", "RESP_STATUS: " + response.status + "\n");
+    }
+  } catch {}
 
   copyGraphqlResponse(res, response);
   if (response.body.kind === 'complete') {
@@ -502,9 +512,10 @@ async function handleRadioUploadRequest({ req, res, pathname, repo, jwtSecret, a
 
     const currentUser = context.currentUser;
     const publicUrl = `${resolvePublicBaseUrl(req, env)}${AUDIO_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    const providedAuthorName = String(body?.authorName ?? '').trim();
     const track = await repo.createRadioTrack({
       title,
-      authorName: currentUser?.profile?.displayName || currentUser?.login || 'Автор',
+      authorName: providedAuthorName || currentUser?.profile?.displayName || currentUser?.login || 'Автор',
       durationSeconds: body?.durationSeconds,
       audioUrl: publicUrl,
       creatorUserId: currentUser?.id ?? null,
