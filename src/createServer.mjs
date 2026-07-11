@@ -201,7 +201,7 @@ const typeDefs = `#graphql
     featuredMain: Boolean!
     createdAt: String!
     updatedAt: String!
-    lastPostAt: String?
+    lastPostAt: String
     author: Author!
     posts: [ForumPost!]!
   }
