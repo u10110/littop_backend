@@ -13,7 +13,9 @@ alter table forum_topics add column if not exists image_url text;
 alter table forum_topics add column if not exists featured_main boolean not null default false;
 create index if not exists idx_forum_topics_featured_main on forum_topics (featured_main) where featured_main = true;
 
--- 4. Настраиваемая картинка в шапке сайта (хранится как site setting).
-insert into site_settings (key, value, updated_at)
-values ('header_image_url', '', now())
+-- 4. Настраиваемая картинка в шапке сайта (таблица site_settings уже создана в Pack-13).
+insert into site_settings (key, value) values
+  ('headerBannerTitle', 'Литопотам — пишем вместе'),
+  ('headerBannerSubtitle', 'Площадка для авторов, переводчиков и редакторов'),
+  ('headerImageUrl', '')
 on conflict (key) do nothing;
