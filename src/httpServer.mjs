@@ -31,6 +31,8 @@ const DISCUSSION_IMAGE_UPLOAD_ENDPOINT = '/api/forum/upload-image';
 const DISCUSSION_PUBLIC_PATH_PREFIX = '/media/forum/';
 const WORK_MEDIA_UPLOAD_ENDPOINT = '/api/works/upload-file';
 const WORK_MEDIA_PUBLIC_PATH_PREFIX = '/media/works/';
+const SITE_HEADER_IMAGE_UPLOAD_ENDPOINT = '/api/site/upload-header-image';
+const SITE_HEADER_PUBLIC_PATH_PREFIX = '/media/site/';
 const WORK_MEDIA_FILE_SIZE_LIMIT_BYTES = 25 * 1024 * 1024;
 const IMAGE_FILE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
 const AUDIO_EXTENSION_BY_MIME = {
@@ -149,6 +151,11 @@ function resolveDiscussionStorageDir(env) {
 function resolveWorkMediaStorageDir(env) {
   const configured = String(env.WORK_MEDIA_UPLOAD_DIR || '').trim();
   return configured ? resolve(configured) : resolve(process.cwd(), 'uploads', 'works');
+}
+
+function resolveSiteHeaderStorageDir(env) {
+  const configured = String(env.SITE_HEADER_UPLOAD_DIR || env.SITE_UPLOAD_DIR || '').trim();
+  return configured ? resolve(configured) : resolve(process.cwd(), 'uploads', 'site');
 }
 
 function sanitizeStoredBaseName(filename) {
@@ -631,6 +638,81 @@ async function handleProfileImageUploadRequest({ req, res, pathname, repo, jwtSe
   return true;
 }
 
+async function handleSiteHeaderImageUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env }) {
+  if (pathname !== SITE_HEADER_IMAGE_UPLOAD_ENDPOINT) {
+    return false;
+  }
+
+  if (req.method !== 'POST') {
+    sendText(res, 405, 'Method not allowed');
+    return true;
+  }
+
+  const context = await buildContext({ req }, { repo, jwtSecret, adminUserIds });
+  if (!context.currentUser) {
+    sendJson(res, 401, { error: 'Требуется авторизация' });
+    return true;
+  }
+  const isAdmin = context.adminUserIds instanceof Set ? context.adminUserIds.has(context.currentUser.id) : false;
+  if (!isAdmin) {
+    sendJson(res, 403, { error: 'Только администратор может изменять шапку сайта.' });
+    return true;
+  }
+
+  const body = await readJsonBody(req);
+
+  try {
+    const fileBuffer = decodeBase64Image(body?.contentBase64);
+    const fileExtension = detectImageExtension({
+      mimeType: body?.mimeType,
+      fileName: body?.fileName,
+    });
+
+    const storageDir = resolveSiteHeaderStorageDir(env);
+    await mkdir(storageDir, { recursive: true });
+    const storedFileName = `site-header-${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
+    const storagePath = `${SITE_HEADER_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    const localPath = join(storageDir, storedFileName);
+    await uploadFile(storagePath, fileBuffer, body?.mimeType, { env, localPath });
+
+    const imageUrl = `${resolvePublicBaseUrl(req, env)}${SITE_HEADER_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    sendJson(res, 201, {
+      ok: true,
+      storedFileName,
+      imageUrl,
+    });
+  } catch (error) {
+    sendJson(res, 400, {
+      error: error instanceof Error ? error.message : 'Не удалось загрузить изображение.',
+    });
+  }
+
+  return true;
+}
+
+async function handleSiteHeaderImageRequest({ req, res, pathname, env }) {
+  if (!pathname.startsWith(SITE_HEADER_PUBLIC_PATH_PREFIX)) {
+    return false;
+  }
+
+  if (req.method !== 'GET') {
+    sendText(res, 405, 'Method not allowed');
+    return true;
+  }
+
+  try {
+    const storedFileName = resolveRequestedStoredFileName(pathname, SITE_HEADER_PUBLIC_PATH_PREFIX);
+    const storagePath = `${SITE_HEADER_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    const localPath = join(resolveSiteHeaderStorageDir(env), storedFileName);
+    const contentType = IMAGE_CONTENT_TYPE_BY_EXTENSION[extname(storedFileName).toLowerCase()] || 'application/octet-stream';
+    await downloadFile(storagePath, res, { env, localPath, contentType });
+  } catch {
+    sendJson(res, 404, { error: 'Изображение шапки не найдено' });
+  }
+
+  return true;
+}
+
 async function handleWorkMediaUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env }) {
   if (pathname !== WORK_MEDIA_UPLOAD_ENDPOINT) {
     return false;
@@ -804,6 +886,10 @@ export function createHttpServer({ apolloServer, repo, jwtSecret, adminUserIds =
         return;
       }
 
+      if (await handleSiteHeaderImageUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env })) {
+        return;
+      }
+
       if (await handleDiscussionImageUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env })) {
         return;
       }
@@ -817,6 +903,10 @@ export function createHttpServer({ apolloServer, repo, jwtSecret, adminUserIds =
       }
 
       if (await handleDiscussionImageFileRequest({ req, res, pathname, env })) {
+        return;
+      }
+
+      if (await handleSiteHeaderImageRequest({ req, res, pathname, env })) {
         return;
       }
 

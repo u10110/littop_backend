@@ -197,9 +197,11 @@ const typeDefs = `#graphql
     status: String!
     isPinned: Boolean!
     tags: [String!]!
+    imageUrl: String
+    featuredMain: Boolean!
     createdAt: String!
     updatedAt: String!
-    lastPostAt: String
+    lastPostAt: String?
     author: Author!
     posts: [ForumPost!]!
   }
@@ -368,6 +370,8 @@ const typeDefs = `#graphql
     sectionSlug: String!
     title: String!
     body: String!
+    imageUrl: String
+    featuredMain: Boolean
   }
 
   input AuthorProfileLinkInput {
@@ -402,6 +406,8 @@ const typeDefs = `#graphql
     sectionSlug: String!
     title: String!
     body: String!
+    imageUrl: String
+    featuredMain: Boolean
   }
 
   type Query {
@@ -424,7 +430,7 @@ const typeDefs = `#graphql
     authorWrittenWorkComments(authorId: ID!, limit: Int = 50): [AuthorReviewFeedItem!]!
     authorReceivedWorkComments(authorId: ID!, limit: Int = 50): [AuthorReviewFeedItem!]!
     forumSections: [ForumSection!]!
-    forumTopics(sectionSlug: String, tag: String, limit: Int = 20, offset: Int = 0): [ForumTopic!]!
+    forumTopics(sectionSlug: String, tag: String, featuredMain: Boolean, limit: Int = 20, offset: Int = 0): [ForumTopic!]!
     forumTopic(id: ID, slug: String): ForumTopic
     privateDialogs(limit: Int = 50): [PrivateDialog!]!
     privateMessages(withUserId: ID, withLogin: String, limit: Int = 100): [PrivateMessage!]!
@@ -491,6 +497,12 @@ function requireAuth(currentUser) {
 
 function isAdminUser(user, adminUserIds) {
   return Boolean(user?.id) && adminUserIds?.has(String(user.id));
+}
+
+// Editors and admins may manage editorial content (editor-column topics,
+// the "show on home" flag, and the site-level header image).
+function isEditorialUser(user, adminUserIds) {
+  return Boolean(user?.id) && (user.role === 'editor' || isAdminUser(user, adminUserIds));
 }
 
 function applyAdminAccess(user, adminUserIds) {
@@ -974,13 +986,21 @@ const resolvers = {
       const user = requireAuth(currentUser);
       return repo.toggleWorkCommentLike({ commentId, userId: user.id });
     },
-    createForumTopic: async (_, { input }, { currentUser, repo }) => {
+    createForumTopic: async (_, { input }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
+      if ((input.sectionSlug === 'editor-column' || input.featuredMain === true) && !isEditorialUser(user, adminUserIds)) {
+        throw new GraphQLError('Только редактор или администратор может публиковать в колонке редактора или выносить темы на главную.', { extensions: { code: 'FORBIDDEN' } });
+      }
       return repo.createForumTopic({ ...input, authorUserId: user.id });
     },
     updateForumTopic: async (_, { topicId, input }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
-      return repo.updateForumTopic({ topicId, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds), ...input });
+      const editorial = isEditorialUser(user, adminUserIds);
+      const wantsEditorialContent = input.sectionSlug === 'editor-column' || (input.featuredMain !== undefined && input.featuredMain !== null);
+      if (wantsEditorialContent && !editorial) {
+        throw new GraphQLError('Только редактор или администратор может публиковать в колонке редактора или выносить темы на главную.', { extensions: { code: 'FORBIDDEN' } });
+      }
+      return repo.updateForumTopic({ topicId, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds), canManageEditorial: editorial, ...input });
     },
     deleteForumTopic: async (_, { topicId }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);

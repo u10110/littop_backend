@@ -220,6 +220,8 @@ function forumTopicFromRow(row) {
     viewsCount: normalizeForumTopicViewCount(row.views_count),
     status: row.status,
     isPinned: Boolean(row.is_pinned),
+    imageUrl: row.image_url ?? null,
+    featuredMain: Boolean(row.featured_main),
     tags: Array.isArray(row.tags) ? row.tags.filter(Boolean) : [],
     createdAt: row.created_at?.toISOString?.() ?? row.created_at,
     updatedAt: row.updated_at?.toISOString?.() ?? row.updated_at,
@@ -2565,7 +2567,7 @@ export function createPostgresRepository(pool) {
       return rows.map(forumSectionFromRow);
     },
 
-    async listForumTopics({ sectionSlug = null, tag = null, limit = 20, offset = 0 } = {}) {
+    async listForumTopics({ sectionSlug = null, tag = null, featuredMain, limit = 20, offset = 0 } = {}) {
       const page = buildLimitOffset(limit, offset);
       const conditions = [];
       const params = [];
@@ -2576,6 +2578,10 @@ export function createPostgresRepository(pool) {
       if (tag) {
         params.push(tag);
         conditions.push(`exists (select 1 from forum_topic_tags ftt2 join forum_tags ft2 on ft2.id = ftt2.tag_id where ftt2.topic_id = ft.id and (ft2.slug = $${params.length} or ft2.name = $${params.length}))`);
+      }
+      if (featuredMain !== undefined && featuredMain !== null) {
+        params.push(Boolean(featuredMain));
+        conditions.push(`ft.featured_main = $${params.length}`);
       }
       params.push(page.limit, page.offset);
       const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
@@ -2634,7 +2640,7 @@ export function createPostgresRepository(pool) {
       return forumTopicFromRow(rows[0]);
     },
 
-    async createForumTopic({ sectionSlug, authorUserId, title, body }) {
+    async createForumTopic({ sectionSlug, authorUserId, title, body, imageUrl, featuredMain }) {
       const client = await pool.connect();
       try {
         await client.query('begin');
@@ -2643,11 +2649,11 @@ export function createPostgresRepository(pool) {
         const slug = `${slugify(title)}-${Date.now()}`;
         const inserted = await client.query(
           `
-          insert into forum_topics (section_id, author_user_id, title, slug, body, last_post_at)
-          values ($1, $2, $3, $4, $5, now())
+          insert into forum_topics (section_id, author_user_id, title, slug, body, image_url, featured_main, last_post_at)
+          values ($1, $2, $3, $4, $5, $6, $7, now())
           returning id
           `,
-          [section.rows[0].id, authorUserId, title, slug, body],
+          [section.rows[0].id, authorUserId, title, slug, body, imageUrl ?? null, Boolean(featuredMain ?? false)],
         );
         await client.query('commit');
         return await this.getForumTopic({ id: inserted.rows[0].id });
@@ -2659,7 +2665,7 @@ export function createPostgresRepository(pool) {
       }
     },
 
-    async updateForumTopic({ topicId, authorUserId, canManageAll = false, sectionSlug, title, body }) {
+    async updateForumTopic({ topicId, authorUserId, canManageAll = false, canManageEditorial = false, sectionSlug, title, body, imageUrl, featuredMain }) {
       const normalizedSectionSlug = String(sectionSlug ?? '').trim();
       const normalizedTitle = String(title ?? '').trim();
       const normalizedBody = String(body ?? '').trim();
@@ -2672,22 +2678,40 @@ export function createPostgresRepository(pool) {
         await client.query('begin');
         const section = await client.query('select id from forum_sections where slug = $1 limit 1', [normalizedSectionSlug]);
         if (!section.rows[0]) throw new Error(`Unknown sectionSlug: ${normalizedSectionSlug}`);
+
+        const assignments = [
+          'section_id = $1',
+          'title = $2',
+          'body = $3',
+          'updated_at = now()',
+        ];
+        const values = [section.rows[0].id, normalizedTitle, normalizedBody];
+        if (imageUrl !== undefined) {
+          values.push(imageUrl ?? null);
+          assignments.push(`image_url = $${values.length}`);
+        }
+        if (featuredMain !== undefined) {
+          values.push(Boolean(featuredMain));
+          assignments.push(`featured_main = $${values.length}`);
+        }
+        values.push(topicId, canManageAll, canManageEditorial, authorUserId);
+        const topicIdIdx = values.length - 3;
+        const canManageAllIdx = values.length - 2;
+        const canManageEditorialIdx = values.length - 1;
+        const authorIdx = values.length;
         const { rows } = await client.query(
           `
           update forum_topics
-          set section_id = $1,
-              title = $2,
-              body = $3,
-              updated_at = now()
-          where id = $4
-            and ($5::boolean = true or author_user_id = $6)
+          set ${assignments.join(',\n              ')}
+          where id = $${topicIdIdx}
+            and ($${canManageAllIdx}::boolean = true or $${canManageEditorialIdx}::boolean = true or author_user_id = $${authorIdx})
             and status in ('open', 'closed')
           returning id
           `,
-          [section.rows[0].id, normalizedTitle, normalizedBody, topicId, canManageAll, authorUserId],
+          values,
         );
         if (!rows[0]) {
-          throw new Error('Only the owner can edit this topic');
+          throw new Error('Only the owner or an editor/admin can edit this topic');
         }
         await client.query('commit');
         return await this.getForumTopic({ id: topicId });
