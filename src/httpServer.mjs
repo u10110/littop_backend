@@ -572,8 +572,9 @@ async function handleDiscussionImageUploadRequest({ req, res, pathname, repo, jw
     await mkdir(storageDir, { recursive: true });
 
     const storedFileName = `discussion-${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
-    const storagePath = join(storageDir, storedFileName);
-    await writeFile(storagePath, fileBuffer);
+    const storagePath = `${DISCUSSION_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    const localPath = join(storageDir, storedFileName);
+    await uploadFile(storagePath, fileBuffer, body?.mimeType, { env, localPath });
 
     const imageUrl = `${resolvePublicBaseUrl(req, env)}${DISCUSSION_PUBLIC_PATH_PREFIX}${storedFileName}`;
     sendJson(res, 201, {
@@ -618,8 +619,9 @@ async function handleForumTopicImageUploadRequest({ req, res, pathname, repo, jw
     await mkdir(storageDir, { recursive: true });
 
     const storedFileName = `topic-${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
-    const storagePath = join(storageDir, storedFileName);
-    await writeFile(storagePath, fileBuffer);
+    const storagePath = `${DISCUSSION_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    const localPath = join(storageDir, storedFileName);
+    await uploadFile(storagePath, fileBuffer, body?.mimeType, { env, localPath });
 
     const imageUrl = `${resolvePublicBaseUrl(req, env)}${DISCUSSION_PUBLIC_PATH_PREFIX}${storedFileName}`;
     sendJson(res, 201, {
