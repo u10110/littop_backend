@@ -77,6 +77,7 @@ const typeDefs = `#graphql
     isClassic: Boolean!
     isMemorialPage: Boolean!
     isFeatured: Boolean!
+    isChild: Boolean
     registeredAt: String!
     lastSeenAt: String
     deletedAt: String
@@ -413,12 +414,12 @@ const typeDefs = `#graphql
   type Query {
     health: Health!
     me: User
-    authors(limit: Int = 20, offset: Int = 0, search: String, classicsOnly: Boolean = false, memorialOnly: Boolean = false, featuredOnly: Boolean = false): [Author!]!
+    authors(limit: Int = 20, offset: Int = 0, search: String, classicsOnly: Boolean = false, memorialOnly: Boolean = false, featuredOnly: Boolean = false, childrenOnly: Boolean = false): [Author!]!
     onlineAuthors(limit: Int = 12): [Author!]!
     todayVisitors(limit: Int = 12): [Author!]!
     birthdayAuthors(limit: Int = 12): [Author!]!
     author(id: ID, login: String): Author
-    works(limit: Int = 20, offset: Int = 0, sectionCode: String, genreSlug: String, authorId: ID, search: String, status: String = "published"): [Work!]!
+    works(limit: Int = 20, offset: Int = 0, sectionCode: String, genreSlug: String, authorId: ID, search: String, status: String = "published", createdToday: Boolean): [Work!]!
     announcedWorks(limit: Int = 12): [Work!]!
     work(id: ID, slug: String): Work
     workComments(workId: ID!, limit: Int = 50, offset: Int = 0): [WorkComment!]!
@@ -452,7 +453,7 @@ const typeDefs = `#graphql
     touchPresence: User!
     updateMyProfile(input: UpdateMyProfileInput!): User!
     adminUpdateAuthorProfile(authorId: ID!, input: UpdateMyProfileInput!): Author!
-    adminUpdateAuthorPageFlags(authorId: ID!, isClassic: Boolean!, isMemorialPage: Boolean!): Author!
+    adminUpdateAuthorPageFlags(authorId: ID!, isClassic: Boolean!, isMemorialPage: Boolean!, isChild: Boolean): Author!
     adminCreateManagedAuthor(input: CreateManagedAuthorInput!): Author!
     adminSwitchManagedAuthor(managedUserId: ID!): AuthPayload!
     adminGrantPeaches(login: String!, amount: Int!, note: String): User!
@@ -856,7 +857,7 @@ const resolvers = {
           extensions: { code: 'FORBIDDEN' },
         });
       }
-      return repo.updateAuthorPageFlags({ authorId, isClassic, isMemorialPage });
+      return repo.updateAuthorPageFlags({ authorId, isClassic, isMemorialPage, isChild });
     },
     adminCreateManagedAuthor: async (_, { input }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
@@ -924,12 +925,8 @@ const resolvers = {
     },
     activateWorkAnnouncement: async (_, { workId }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
-      if (!isAdminUser(user, adminUserIds)) {
-        throw new GraphQLError('Only admin can add works to announcements', {
-          extensions: { code: 'FORBIDDEN' },
-        });
-      }
-      return repo.activateWorkAnnouncement({ workId, activatedByUserId: user.id });
+      const isAdmin = isAdminUser(user, adminUserIds);
+      return repo.activateWorkAnnouncement({ workId, activatedByUserId: user.id, isAdmin });
     },
     toggleWorkLike: async (_, { workId }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
@@ -1070,6 +1067,7 @@ const resolvers = {
   Author: {
     isOnline: (parent) => resolveOnlineFlag(parent),
     isMemorialPage: (parent) => Boolean(parent?.isMemorialPage),
+    isChild: (parent) => Boolean(parent?.isChild),
     coverImagePositionX: async (parent, _, { repo }) => parent?.coverImagePositionX ?? (await repo.getAuthor({ id: parent.id }))?.coverImagePositionX ?? 50,
     coverImagePositionY: async (parent, _, { repo }) => parent?.coverImagePositionY ?? (await repo.getAuthor({ id: parent.id }))?.coverImagePositionY ?? 50,
     coverImageScale: async (parent, _, { repo }) => parent?.coverImageScale ?? (await repo.getAuthor({ id: parent.id }))?.coverImageScale ?? 1,
