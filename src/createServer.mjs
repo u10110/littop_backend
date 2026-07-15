@@ -850,7 +850,7 @@ const resolvers = {
       });
       return repo.getAuthor({ id: authorId });
     },
-    adminUpdateAuthorPageFlags: async (_, { authorId, isClassic, isMemorialPage }, { currentUser, repo, adminUserIds }) => {
+    adminUpdateAuthorPageFlags: async (_, { authorId, isClassic, isMemorialPage, isChild }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
       if (!isAdminUser(user, adminUserIds)) {
         throw new GraphQLError('Only admin can change author page flags', {
