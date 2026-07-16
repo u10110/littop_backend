@@ -458,6 +458,7 @@ const typeDefs = `#graphql
     adminSwitchManagedAuthor(managedUserId: ID!): AuthPayload!
     adminGrantPeaches(login: String!, amount: Int!, note: String): User!
     closeMyAccount: Boolean!
+    adminDeleteUser(userId: ID!): Boolean!
     createWork(input: CreateWorkInput!): Work!
     adminCreateWork(authorId: ID!, input: CreateWorkInput!): Work!
     updateWork(workId: ID!, input: UpdateWorkInput!): Work!
@@ -901,6 +902,21 @@ const resolvers = {
     closeMyAccount: async (_, __, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
       return repo.closeUserAccount({ userId: user.id });
+    },
+    adminDeleteUser: async (_, { userId }, { currentUser, repo, adminUserIds }) => {
+      const actor = requireAuth(currentUser);
+      if (!isAdminUser(actor, adminUserIds)) {
+        throw new GraphQLError('Только администратор может удалять аккаунты', { extensions: { code: 'FORBIDDEN' } });
+      }
+      if (String(actor.id) === String(userId)) {
+        throw new GraphQLError('Администратор не может удалить сам себя', { extensions: { code: 'FORBIDDEN' } });
+      }
+      const target = await repo.getUserById(userId);
+      if (target?.role === 'admin') {
+        throw new GraphQLError('Нельзя удалить другого администратора', { extensions: { code: 'FORBIDDEN' } });
+      }
+      await repo.closeUserAccount({ userId });
+      return true;
     },
     createWork: async (_, { input }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
