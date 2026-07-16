@@ -29,8 +29,11 @@ const PROFILE_IMAGE_UPLOAD_ENDPOINT = '/api/profile/upload-image';
 const PROFILE_PUBLIC_PATH_PREFIX = '/media/profile/';
 const DISCUSSION_IMAGE_UPLOAD_ENDPOINT = '/api/forum/upload-image';
 const DISCUSSION_PUBLIC_PATH_PREFIX = '/media/forum/';
+const FORUM_TOPIC_IMAGE_UPLOAD_ENDPOINT = '/api/forum/upload-topic-image';
 const WORK_MEDIA_UPLOAD_ENDPOINT = '/api/works/upload-file';
 const WORK_MEDIA_PUBLIC_PATH_PREFIX = '/media/works/';
+const SITE_HEADER_IMAGE_UPLOAD_ENDPOINT = '/api/site/upload-header-image';
+const SITE_HEADER_PUBLIC_PATH_PREFIX = '/media/site/';
 const WORK_MEDIA_FILE_SIZE_LIMIT_BYTES = 25 * 1024 * 1024;
 const IMAGE_FILE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
 const AUDIO_EXTENSION_BY_MIME = {
@@ -149,6 +152,11 @@ function resolveDiscussionStorageDir(env) {
 function resolveWorkMediaStorageDir(env) {
   const configured = String(env.WORK_MEDIA_UPLOAD_DIR || '').trim();
   return configured ? resolve(configured) : resolve(process.cwd(), 'uploads', 'works');
+}
+
+function resolveSiteHeaderStorageDir(env) {
+  const configured = String(env.SITE_HEADER_UPLOAD_DIR || env.SITE_UPLOAD_DIR || '').trim();
+  return configured ? resolve(configured) : resolve(process.cwd(), 'uploads', 'site');
 }
 
 function sanitizeStoredBaseName(filename) {
@@ -355,7 +363,10 @@ async function handleGraphqlRequest({ req, res, apolloServer, repo, jwtSecret, a
     }
   }
 
+  try { fs.appendFileSync("/tmp/gql_debug.log", `\n=== ${new Date().toISOString()} ${req.method} ${req.url} ===\nHEADERS: ${JSON.stringify(req.headers)}\n`); } catch {}
   const body = req.method === 'GET' ? undefined : await readJsonBody(req);
+  try { fs.appendFileSync("/tmp/gql_debug.log", `BODY: ${JSON.stringify(body).slice(0,3000)}\n`); } catch {}
+
   const httpGraphQLRequest = {
     method: req.method.toUpperCase(),
     headers,
@@ -367,6 +378,13 @@ async function handleGraphqlRequest({ req, res, apolloServer, repo, jwtSecret, a
     httpGraphQLRequest,
     context: () => buildContext({ req }, { repo, jwtSecret, adminUserIds }),
   });
+  try {
+    if (response.body && response.body.kind === complete) {
+      fs.appendFileSync("/tmp/gql_debug.log", "RESP_BODY: " + response.body.string.slice(0,1500) + "\n");
+    } else {
+      fs.appendFileSync("/tmp/gql_debug.log", "RESP_STATUS: " + response.status + "\n");
+    }
+  } catch {}
 
   copyGraphqlResponse(res, response);
   if (response.body.kind === 'complete') {
@@ -502,9 +520,10 @@ async function handleRadioUploadRequest({ req, res, pathname, repo, jwtSecret, a
 
     const currentUser = context.currentUser;
     const publicUrl = `${resolvePublicBaseUrl(req, env)}${AUDIO_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    const providedAuthorName = String(body?.authorName ?? '').trim();
     const track = await repo.createRadioTrack({
       title,
-      authorName: currentUser?.profile?.displayName || currentUser?.login || 'Автор',
+      authorName: providedAuthorName || currentUser?.profile?.displayName || currentUser?.login || 'Автор',
       durationSeconds: body?.durationSeconds,
       audioUrl: publicUrl,
       creatorUserId: currentUser?.id ?? null,
@@ -553,8 +572,56 @@ async function handleDiscussionImageUploadRequest({ req, res, pathname, repo, jw
     await mkdir(storageDir, { recursive: true });
 
     const storedFileName = `discussion-${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
-    const storagePath = join(storageDir, storedFileName);
-    await writeFile(storagePath, fileBuffer);
+    const storagePath = `${DISCUSSION_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    const localPath = join(storageDir, storedFileName);
+    await uploadFile(storagePath, fileBuffer, body?.mimeType, { env, localPath });
+
+    const imageUrl = `${resolvePublicBaseUrl(req, env)}${DISCUSSION_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    sendJson(res, 201, {
+      ok: true,
+      storedFileName,
+      imageUrl,
+    });
+  } catch (error) {
+    sendJson(res, 400, {
+      error: error instanceof Error ? error.message : 'Не удалось загрузить изображение.',
+    });
+  }
+
+  return true;
+}
+
+async function handleForumTopicImageUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env }) {
+  if (pathname !== FORUM_TOPIC_IMAGE_UPLOAD_ENDPOINT) {
+    return false;
+  }
+
+  if (req.method !== 'POST') {
+    sendText(res, 405, 'Method not allowed');
+    return true;
+  }
+
+  const context = await buildContext({ req }, { repo, jwtSecret, adminUserIds });
+  if (!context.currentUser) {
+    sendJson(res, 401, { error: 'Authentication required' });
+    return true;
+  }
+
+  const body = await readJsonBody(req);
+
+  try {
+    const fileBuffer = decodeBase64Image(body?.contentBase64);
+    const fileExtension = detectImageExtension({
+      mimeType: body?.mimeType,
+      fileName: body?.fileName,
+    });
+    const storageDir = resolveDiscussionStorageDir(env);
+    await mkdir(storageDir, { recursive: true });
+
+    const storedFileName = `topic-${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
+    const storagePath = `${DISCUSSION_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    const localPath = join(storageDir, storedFileName);
+    await uploadFile(storagePath, fileBuffer, body?.mimeType, { env, localPath });
 
     const imageUrl = `${resolvePublicBaseUrl(req, env)}${DISCUSSION_PUBLIC_PATH_PREFIX}${storedFileName}`;
     sendJson(res, 201, {
@@ -615,6 +682,81 @@ async function handleProfileImageUploadRequest({ req, res, pathname, repo, jwtSe
     sendJson(res, 400, {
       error: error instanceof Error ? error.message : 'Не удалось загрузить изображение.',
     });
+  }
+
+  return true;
+}
+
+async function handleSiteHeaderImageUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env }) {
+  if (pathname !== SITE_HEADER_IMAGE_UPLOAD_ENDPOINT) {
+    return false;
+  }
+
+  if (req.method !== 'POST') {
+    sendText(res, 405, 'Method not allowed');
+    return true;
+  }
+
+  const context = await buildContext({ req }, { repo, jwtSecret, adminUserIds });
+  if (!context.currentUser) {
+    sendJson(res, 401, { error: 'Требуется авторизация' });
+    return true;
+  }
+  const isAdmin = context.adminUserIds instanceof Set ? context.adminUserIds.has(context.currentUser.id) : false;
+  if (!isAdmin) {
+    sendJson(res, 403, { error: 'Только администратор может изменять шапку сайта.' });
+    return true;
+  }
+
+  const body = await readJsonBody(req);
+
+  try {
+    const fileBuffer = decodeBase64Image(body?.contentBase64);
+    const fileExtension = detectImageExtension({
+      mimeType: body?.mimeType,
+      fileName: body?.fileName,
+    });
+
+    const storageDir = resolveSiteHeaderStorageDir(env);
+    await mkdir(storageDir, { recursive: true });
+    const storedFileName = `site-header-${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
+    const storagePath = `${SITE_HEADER_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    const localPath = join(storageDir, storedFileName);
+    await uploadFile(storagePath, fileBuffer, body?.mimeType, { env, localPath });
+
+    const imageUrl = `${resolvePublicBaseUrl(req, env)}${SITE_HEADER_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    sendJson(res, 201, {
+      ok: true,
+      storedFileName,
+      imageUrl,
+    });
+  } catch (error) {
+    sendJson(res, 400, {
+      error: error instanceof Error ? error.message : 'Не удалось загрузить изображение.',
+    });
+  }
+
+  return true;
+}
+
+async function handleSiteHeaderImageRequest({ req, res, pathname, env }) {
+  if (!pathname.startsWith(SITE_HEADER_PUBLIC_PATH_PREFIX)) {
+    return false;
+  }
+
+  if (req.method !== 'GET') {
+    sendText(res, 405, 'Method not allowed');
+    return true;
+  }
+
+  try {
+    const storedFileName = resolveRequestedStoredFileName(pathname, SITE_HEADER_PUBLIC_PATH_PREFIX);
+    const storagePath = `${SITE_HEADER_PUBLIC_PATH_PREFIX}${storedFileName}`;
+    const localPath = join(resolveSiteHeaderStorageDir(env), storedFileName);
+    const contentType = IMAGE_CONTENT_TYPE_BY_EXTENSION[extname(storedFileName).toLowerCase()] || 'application/octet-stream';
+    await downloadFile(storagePath, res, { env, localPath, contentType });
+  } catch {
+    sendJson(res, 404, { error: 'Изображение шапки не найдено' });
   }
 
   return true;
@@ -793,7 +935,15 @@ export function createHttpServer({ apolloServer, repo, jwtSecret, adminUserIds =
         return;
       }
 
+      if (await handleSiteHeaderImageUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env })) {
+        return;
+      }
+
       if (await handleDiscussionImageUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env })) {
+        return;
+      }
+
+      if (await handleForumTopicImageUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env })) {
         return;
       }
 
@@ -806,6 +956,10 @@ export function createHttpServer({ apolloServer, repo, jwtSecret, adminUserIds =
       }
 
       if (await handleDiscussionImageFileRequest({ req, res, pathname, env })) {
+        return;
+      }
+
+      if (await handleSiteHeaderImageRequest({ req, res, pathname, env })) {
         return;
       }
 

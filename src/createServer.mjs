@@ -77,6 +77,7 @@ const typeDefs = `#graphql
     isClassic: Boolean!
     isMemorialPage: Boolean!
     isFeatured: Boolean!
+    isChild: Boolean
     registeredAt: String!
     lastSeenAt: String
     deletedAt: String
@@ -197,6 +198,8 @@ const typeDefs = `#graphql
     status: String!
     isPinned: Boolean!
     tags: [String!]!
+    imageUrl: String
+    featuredMain: Boolean!
     createdAt: String!
     updatedAt: String!
     lastPostAt: String
@@ -295,6 +298,7 @@ const typeDefs = `#graphql
     id: ID!
     title: String!
     authorName: String
+    creatorUserId: ID
     durationSeconds: Int
     audioUrl: String
     sourceUrl: String
@@ -302,6 +306,17 @@ const typeDefs = `#graphql
     ratingsCount: Int!
     createdAt: String!
     updatedAt: String!
+  }
+
+  input RadioTrackUpdateInput {
+    id: ID!
+    title: String
+    authorName: String
+  }
+
+  type SiteSetting {
+    key: String!
+    value: String
   }
 
   type AuthPayload {
@@ -356,6 +371,8 @@ const typeDefs = `#graphql
     sectionSlug: String!
     title: String!
     body: String!
+    imageUrl: String
+    featuredMain: Boolean
   }
 
   input AuthorProfileLinkInput {
@@ -390,17 +407,19 @@ const typeDefs = `#graphql
     sectionSlug: String!
     title: String!
     body: String!
+    imageUrl: String
+    featuredMain: Boolean
   }
 
   type Query {
     health: Health!
     me: User
-    authors(limit: Int = 20, offset: Int = 0, search: String, classicsOnly: Boolean = false, memorialOnly: Boolean = false, featuredOnly: Boolean = false): [Author!]!
+    authors(limit: Int = 20, offset: Int = 0, search: String, classicsOnly: Boolean = false, memorialOnly: Boolean = false, featuredOnly: Boolean = false, childrenOnly: Boolean = false): [Author!]!
     onlineAuthors(limit: Int = 12): [Author!]!
     todayVisitors(limit: Int = 12): [Author!]!
     birthdayAuthors(limit: Int = 12): [Author!]!
     author(id: ID, login: String): Author
-    works(limit: Int = 20, offset: Int = 0, sectionCode: String, genreSlug: String, authorId: ID, search: String, status: String = "published"): [Work!]!
+    works(limit: Int = 20, offset: Int = 0, sectionCode: String, genreSlug: String, authorId: ID, search: String, status: String = "published", createdToday: Boolean): [Work!]!
     announcedWorks(limit: Int = 12): [Work!]!
     work(id: ID, slug: String): Work
     workComments(workId: ID!, limit: Int = 50, offset: Int = 0): [WorkComment!]!
@@ -412,7 +431,7 @@ const typeDefs = `#graphql
     authorWrittenWorkComments(authorId: ID!, limit: Int = 50): [AuthorReviewFeedItem!]!
     authorReceivedWorkComments(authorId: ID!, limit: Int = 50): [AuthorReviewFeedItem!]!
     forumSections: [ForumSection!]!
-    forumTopics(sectionSlug: String, tag: String, limit: Int = 20, offset: Int = 0): [ForumTopic!]!
+    forumTopics(sectionSlug: String, tag: String, featuredMain: Boolean, limit: Int = 20, offset: Int = 0): [ForumTopic!]!
     forumTopic(id: ID, slug: String): ForumTopic
     privateDialogs(limit: Int = 50): [PrivateDialog!]!
     privateMessages(withUserId: ID, withLogin: String, limit: Int = 100): [PrivateMessage!]!
@@ -421,6 +440,8 @@ const typeDefs = `#graphql
     myPeachTransactions(limit: Int = 50): [PeachTransaction!]!
     contests(status: String, scope: String, limit: Int = 20, offset: Int = 0): [Contest!]!
     radioTracks(limit: Int = 20, offset: Int = 0): [RadioTrack!]!
+    radioTracksByCreator(creatorUserId: ID!): [RadioTrack!]!
+    siteSettings: [SiteSetting!]!
   }
 
   type Mutation {
@@ -432,7 +453,7 @@ const typeDefs = `#graphql
     touchPresence: User!
     updateMyProfile(input: UpdateMyProfileInput!): User!
     adminUpdateAuthorProfile(authorId: ID!, input: UpdateMyProfileInput!): Author!
-    adminUpdateAuthorPageFlags(authorId: ID!, isClassic: Boolean!, isMemorialPage: Boolean!): Author!
+    adminUpdateAuthorPageFlags(authorId: ID!, isClassic: Boolean!, isMemorialPage: Boolean!, isChild: Boolean): Author!
     adminCreateManagedAuthor(input: CreateManagedAuthorInput!): Author!
     adminSwitchManagedAuthor(managedUserId: ID!): AuthPayload!
     adminGrantPeaches(login: String!, amount: Int!, note: String): User!
@@ -441,6 +462,9 @@ const typeDefs = `#graphql
     adminCreateWork(authorId: ID!, input: CreateWorkInput!): Work!
     updateWork(workId: ID!, input: UpdateWorkInput!): Work!
     deleteWork(workId: ID!): Work!
+    updateRadioTrack(input: RadioTrackUpdateInput!): RadioTrack!
+    deleteRadioTrack(id: ID!): RadioTrack!
+    updateSiteSetting(key: String!, value: String!): SiteSetting!
     activateWorkAnnouncement(workId: ID!): Work!
     toggleWorkLike(workId: ID!): Work!
     toggleWorkDislike(workId: ID!): Work!
@@ -474,6 +498,12 @@ function requireAuth(currentUser) {
 
 function isAdminUser(user, adminUserIds) {
   return Boolean(user?.id) && adminUserIds?.has(String(user.id));
+}
+
+// Editors and admins may manage editorial content (editor-column topics,
+// the "show on home" flag, and the site-level header image).
+function isEditorialUser(user, adminUserIds) {
+  return Boolean(user?.id) && (user.role === 'editor' || isAdminUser(user, adminUserIds));
 }
 
 function applyAdminAccess(user, adminUserIds) {
@@ -635,6 +665,8 @@ const resolvers = {
     myPeachTransactions: async (_, args, { repo, currentUser }) => repo.listUserPeachTransactions({ userId: requireAuth(currentUser).id, limit: args.limit ?? 50 }),
     contests: async (_, args, { repo }) => repo.listContests(args),
     radioTracks: async (_, args, { repo }) => repo.listRadioTracks(args),
+    radioTracksByCreator: async (_, { creatorUserId }, { repo }) => repo.listRadioTracksByCreator({ creatorUserId }),
+    siteSettings: async (_, __, { repo }) => repo.listSiteSettings(),
   },
   Mutation: {
     register: async (_, { input }, { repo, jwtSecret }) => {
@@ -818,14 +850,14 @@ const resolvers = {
       });
       return repo.getAuthor({ id: authorId });
     },
-    adminUpdateAuthorPageFlags: async (_, { authorId, isClassic, isMemorialPage }, { currentUser, repo, adminUserIds }) => {
+    adminUpdateAuthorPageFlags: async (_, { authorId, isClassic, isMemorialPage, isChild }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
       if (!isAdminUser(user, adminUserIds)) {
         throw new GraphQLError('Only admin can change author page flags', {
           extensions: { code: 'FORBIDDEN' },
         });
       }
-      return repo.updateAuthorPageFlags({ authorId, isClassic, isMemorialPage });
+      return repo.updateAuthorPageFlags({ authorId, isClassic, isMemorialPage, isChild });
     },
     adminCreateManagedAuthor: async (_, { input }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
@@ -893,12 +925,8 @@ const resolvers = {
     },
     activateWorkAnnouncement: async (_, { workId }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
-      if (!isAdminUser(user, adminUserIds)) {
-        throw new GraphQLError('Only admin can add works to announcements', {
-          extensions: { code: 'FORBIDDEN' },
-        });
-      }
-      return repo.activateWorkAnnouncement({ workId, activatedByUserId: user.id });
+      const isAdmin = isAdminUser(user, adminUserIds);
+      return repo.activateWorkAnnouncement({ workId, activatedByUserId: user.id, isAdmin });
     },
     toggleWorkLike: async (_, { workId }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
@@ -929,6 +957,20 @@ const resolvers = {
       }
       return comment;
     },
+    updateRadioTrack: async (_, { input }, { currentUser, repo, adminUserIds }) => {
+      if (!currentUser) throw new GraphQLError('Auth required', { extensions: { code: 'UNAUTHENTICATED' } });
+      const user = currentUser;
+      return repo.updateRadioTrack({ id: input.id, title: input.title, authorName: input.authorName, canManageAll: isAdminUser(user, adminUserIds), requestingUserId: user.id });
+    },
+    deleteRadioTrack: async (_, { id }, { currentUser, repo, adminUserIds }) => {
+      if (!currentUser) throw new GraphQLError('Auth required', { extensions: { code: 'UNAUTHENTICATED' } });
+      const user = currentUser;
+      return repo.deleteRadioTrack({ id, canManageAll: isAdminUser(user, adminUserIds), requestingUserId: user.id });
+    },
+    updateSiteSetting: async (_, { key, value }, { currentUser, repo, adminUserIds }) => {
+      if (!isAdminUser(currentUser, adminUserIds)) throw new GraphQLError('Only owner can change site settings', { extensions: { code: 'FORBIDDEN' } });
+      return repo.upsertSiteSetting({ key, value });
+    },
     updateWorkComment: async (_, { commentId, body, imageUrl }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
       return repo.updateWorkComment({ commentId, userId: user.id, canManageAll: isAdminUser(user, adminUserIds), body, imageUrl });
@@ -941,13 +983,21 @@ const resolvers = {
       const user = requireAuth(currentUser);
       return repo.toggleWorkCommentLike({ commentId, userId: user.id });
     },
-    createForumTopic: async (_, { input }, { currentUser, repo }) => {
+    createForumTopic: async (_, { input }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
+      if ((input.sectionSlug === 'editor-column' || input.featuredMain === true) && !isEditorialUser(user, adminUserIds)) {
+        throw new GraphQLError('Только редактор или администратор может публиковать в колонке редактора или выносить темы на главную.', { extensions: { code: 'FORBIDDEN' } });
+      }
       return repo.createForumTopic({ ...input, authorUserId: user.id });
     },
     updateForumTopic: async (_, { topicId, input }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
-      return repo.updateForumTopic({ topicId, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds), ...input });
+      const editorial = isEditorialUser(user, adminUserIds);
+      const wantsEditorialContent = input.sectionSlug === 'editor-column' || (input.featuredMain !== undefined && input.featuredMain !== null);
+      if (wantsEditorialContent && !editorial) {
+        throw new GraphQLError('Только редактор или администратор может публиковать в колонке редактора или выносить темы на главную.', { extensions: { code: 'FORBIDDEN' } });
+      }
+      return repo.updateForumTopic({ topicId, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds), canManageEditorial: editorial, ...input });
     },
     deleteForumTopic: async (_, { topicId }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
@@ -1017,6 +1067,7 @@ const resolvers = {
   Author: {
     isOnline: (parent) => resolveOnlineFlag(parent),
     isMemorialPage: (parent) => Boolean(parent?.isMemorialPage),
+    isChild: (parent) => Boolean(parent?.isChild),
     coverImagePositionX: async (parent, _, { repo }) => parent?.coverImagePositionX ?? (await repo.getAuthor({ id: parent.id }))?.coverImagePositionX ?? 50,
     coverImagePositionY: async (parent, _, { repo }) => parent?.coverImagePositionY ?? (await repo.getAuthor({ id: parent.id }))?.coverImagePositionY ?? 50,
     coverImageScale: async (parent, _, { repo }) => parent?.coverImageScale ?? (await repo.getAuthor({ id: parent.id }))?.coverImageScale ?? 1,

@@ -69,6 +69,7 @@ function userFromRow(row) {
       isClassic: Boolean(row.is_classic),
       isMemorialPage: Boolean(row.is_memorial_page),
       isFeatured: Boolean(row.is_featured),
+      isChild: Boolean(row.is_child),
       peachBalance: Number(row.peach_balance ?? 0),
       audioUploadSlots: Number(row.audio_upload_slots ?? 0),
       profileLinks: Array.isArray(row.profile_links) ? row.profile_links : undefined,
@@ -97,6 +98,7 @@ function authorFromRow(row) {
     isClassic: Boolean(row.is_classic),
     isMemorialPage: Boolean(row.is_memorial_page),
     isFeatured: Boolean(row.is_featured),
+    isChild: Boolean(row.is_child),
     profileLinks: Array.isArray(row.profile_links) ? row.profile_links : undefined,
     registeredAt: toIsoDate(row.registered_at),
     lastSeenAt: toIsoDate(row.last_seen_at),
@@ -220,6 +222,8 @@ function forumTopicFromRow(row) {
     viewsCount: normalizeForumTopicViewCount(row.views_count),
     status: row.status,
     isPinned: Boolean(row.is_pinned),
+    imageUrl: row.image_url ?? null,
+    featuredMain: Boolean(row.featured_main),
     tags: Array.isArray(row.tags) ? row.tags.filter(Boolean) : [],
     createdAt: row.created_at?.toISOString?.() ?? row.created_at,
     updatedAt: row.updated_at?.toISOString?.() ?? row.updated_at,
@@ -309,6 +313,7 @@ function radioTrackFromRow(row) {
   if (!row) return null;
   return {
     id: row.id,
+    creatorUserId: row.creator_user_id,
     title: row.title,
     authorName: row.author_name,
     durationSeconds: row.duration_seconds == null ? null : Number(row.duration_seconds),
@@ -750,7 +755,7 @@ export function createPostgresRepository(pool) {
     async findUserByEmailOrLogin(email, login) {
       const { rows } = await pool.query(
         `
-        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.peach_balance, ap.audio_upload_slots
+        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.is_child, ap.peach_balance, ap.audio_upload_slots
         from users u
         left join author_profiles ap on ap.user_id = u.id
         where u.email = $1 or u.login = $2
@@ -764,7 +769,7 @@ export function createPostgresRepository(pool) {
     async getUserByIdentifier(identifier) {
       const { rows } = await pool.query(
         `
-        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.peach_balance, ap.audio_upload_slots
+        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.is_child, ap.peach_balance, ap.audio_upload_slots
         from users u
         left join author_profiles ap on ap.user_id = u.id
         where (u.email = $1 or u.login = $1)
@@ -779,7 +784,7 @@ export function createPostgresRepository(pool) {
     async getUserByIdentifierIncludingDeleted(identifier) {
       const { rows } = await pool.query(
         `
-        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.peach_balance, ap.audio_upload_slots
+        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.is_child, ap.peach_balance, ap.audio_upload_slots
         from users u
         left join author_profiles ap on ap.user_id = u.id
         where (u.email = $1 or u.login = $1)
@@ -827,7 +832,7 @@ export function createPostgresRepository(pool) {
     async getUserById(id) {
       const { rows } = await pool.query(
         `
-        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.peach_balance, ap.audio_upload_slots
+        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.is_child, ap.peach_balance, ap.audio_upload_slots
         from users u
         left join author_profiles ap on ap.user_id = u.id
         where u.id = $1
@@ -844,7 +849,7 @@ export function createPostgresRepository(pool) {
 
       const { rows } = await pool.query(
         `
-        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.peach_balance, ap.audio_upload_slots
+        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.is_child, ap.peach_balance, ap.audio_upload_slots
         from users u
         left join author_profiles ap on ap.user_id = u.id
         where u.email = $1
@@ -887,7 +892,7 @@ export function createPostgresRepository(pool) {
 
       const { rows } = await pool.query(
         `
-        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.peach_balance, ap.audio_upload_slots
+        select u.*, ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.is_child, ap.peach_balance, ap.audio_upload_slots
         from social_accounts sa
         join users u on u.id = sa.user_id
         left join author_profiles ap on ap.user_id = u.id
@@ -1347,7 +1352,7 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
-               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.peach_balance, ap.audio_upload_slots
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.is_child, ap.peach_balance, ap.audio_upload_slots
         from users u
         join author_profiles ap on ap.user_id = u.id
         where u.id = $1
@@ -1358,7 +1363,7 @@ export function createPostgresRepository(pool) {
       return authorFromRow(rows[0]);
     },
 
-    async listAuthors({ limit = 20, offset = 0, search = null, classicsOnly = false, memorialOnly = false, featuredOnly = false } = {}) {
+    async listAuthors({ limit = 20, offset = 0, search = null, classicsOnly = false, memorialOnly = false, featuredOnly = false, childrenOnly = false } = {}) {
       const page = buildLimitOffset(limit, offset);
       const conditions = [];
       const params = [];
@@ -1369,12 +1374,13 @@ export function createPostgresRepository(pool) {
       if (classicsOnly) conditions.push('ap.is_classic = true');
       if (memorialOnly) conditions.push('ap.is_memorial_page = true');
       if (featuredOnly) conditions.push('ap.is_featured = true');
+      if (childrenOnly) conditions.push('ap.is_child = true');
       params.push(page.limit, page.offset);
       const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
       const { rows } = await pool.query(
         `
         select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
-               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.peach_balance, ap.audio_upload_slots
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.is_child, ap.peach_balance, ap.audio_upload_slots
         from users u
         join author_profiles ap on ap.user_id = u.id
         ${where ? `${where} and u.status <> 'deleted'` : `where u.status <> 'deleted'`}
@@ -1391,7 +1397,7 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
-               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.peach_balance, ap.audio_upload_slots
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.is_child, ap.peach_balance, ap.audio_upload_slots
         from users u
         join author_profiles ap on ap.user_id = u.id
         where u.status <> 'deleted'
@@ -1413,7 +1419,7 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
-               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.peach_balance, ap.audio_upload_slots
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.is_child, ap.peach_balance, ap.audio_upload_slots
         from users u
         join author_profiles ap on ap.user_id = u.id
         where u.status <> 'deleted'
@@ -1434,7 +1440,7 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
-               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.peach_balance, ap.audio_upload_slots
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.is_child, ap.peach_balance, ap.audio_upload_slots
         from users u
         join author_profiles ap on ap.user_id = u.id
         where u.status <> 'deleted'
@@ -1455,7 +1461,7 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
-               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.peach_balance, ap.audio_upload_slots
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.is_child, ap.peach_balance, ap.audio_upload_slots
         from users u
         join author_profiles ap on ap.user_id = u.id
         where ${field}
@@ -1726,7 +1732,7 @@ export function createPostgresRepository(pool) {
         `
         select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
                ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url,
-               ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.peach_balance, ap.audio_upload_slots
+               ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.is_child, ap.peach_balance, ap.audio_upload_slots
         from work_likes wl
         join users u on u.id = wl.user_id
         left join author_profiles ap on ap.user_id = u.id
@@ -1745,7 +1751,7 @@ export function createPostgresRepository(pool) {
         `
         select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
                ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url,
-               ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.peach_balance, ap.audio_upload_slots
+               ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.is_child, ap.peach_balance, ap.audio_upload_slots
         from work_comment_likes wcl
         join users u on u.id = wcl.user_id
         left join author_profiles ap on ap.user_id = u.id
@@ -1911,7 +1917,7 @@ export function createPostgresRepository(pool) {
       return rows.map(workFromRow);
     },
 
-    async activateWorkAnnouncement({ workId, activatedByUserId }) {
+    async activateWorkAnnouncement({ workId, activatedByUserId, isAdmin = false }) {
       const client = await pool.connect();
       try {
         await client.query('begin');
@@ -1955,6 +1961,19 @@ export function createPostgresRepository(pool) {
               limit 1
             )
             `,
+          );
+        }
+
+        if (!isAdmin) {
+          await applyPeachDelta(
+            {
+              userId: activatedByUserId,
+              amount: -50,
+              kind: 'work_announcement',
+              note: 'Анонс произведения на главной',
+              requireSufficientBalance: true,
+            },
+            client,
           );
         }
 
@@ -2053,7 +2072,7 @@ export function createPostgresRepository(pool) {
       return rows.map(authorReviewFeedItemFromRow);
     },
 
-    async listWorks({ limit = 20, offset = 0, sectionCode = null, genreSlug = null, authorId = null, search = null, status = 'published' } = {}) {
+    async listWorks({ limit = 20, offset = 0, sectionCode = null, genreSlug = null, authorId = null, search = null, status = 'published', createdToday = false } = {}) {
       const page = buildLimitOffset(limit, offset);
       const conditions = [];
       const params = [];
@@ -2076,6 +2095,9 @@ export function createPostgresRepository(pool) {
       if (status) {
         params.push(status);
         conditions.push(`w.status = $${params.length}`);
+      }
+      if (createdToday) {
+        conditions.push(`date(w.created_at) = current_date`);
       }
       params.push(page.limit, page.offset);
       const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
@@ -2564,7 +2586,7 @@ export function createPostgresRepository(pool) {
       return rows.map(forumSectionFromRow);
     },
 
-    async listForumTopics({ sectionSlug = null, tag = null, limit = 20, offset = 0 } = {}) {
+    async listForumTopics({ sectionSlug = null, tag = null, featuredMain, limit = 20, offset = 0 } = {}) {
       const page = buildLimitOffset(limit, offset);
       const conditions = [];
       const params = [];
@@ -2575,6 +2597,10 @@ export function createPostgresRepository(pool) {
       if (tag) {
         params.push(tag);
         conditions.push(`exists (select 1 from forum_topic_tags ftt2 join forum_tags ft2 on ft2.id = ftt2.tag_id where ftt2.topic_id = ft.id and (ft2.slug = $${params.length} or ft2.name = $${params.length}))`);
+      }
+      if (featuredMain !== undefined && featuredMain !== null) {
+        params.push(Boolean(featuredMain));
+        conditions.push(`ft.featured_main = $${params.length}`);
       }
       params.push(page.limit, page.offset);
       const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
@@ -2633,7 +2659,7 @@ export function createPostgresRepository(pool) {
       return forumTopicFromRow(rows[0]);
     },
 
-    async createForumTopic({ sectionSlug, authorUserId, title, body }) {
+    async createForumTopic({ sectionSlug, authorUserId, title, body, imageUrl, featuredMain }) {
       const client = await pool.connect();
       try {
         await client.query('begin');
@@ -2642,11 +2668,11 @@ export function createPostgresRepository(pool) {
         const slug = `${slugify(title)}-${Date.now()}`;
         const inserted = await client.query(
           `
-          insert into forum_topics (section_id, author_user_id, title, slug, body, last_post_at)
-          values ($1, $2, $3, $4, $5, now())
+          insert into forum_topics (section_id, author_user_id, title, slug, body, image_url, featured_main, last_post_at)
+          values ($1, $2, $3, $4, $5, $6, $7, now())
           returning id
           `,
-          [section.rows[0].id, authorUserId, title, slug, body],
+          [section.rows[0].id, authorUserId, title, slug, body, imageUrl ?? null, Boolean(featuredMain ?? false)],
         );
         await client.query('commit');
         return await this.getForumTopic({ id: inserted.rows[0].id });
@@ -2658,7 +2684,7 @@ export function createPostgresRepository(pool) {
       }
     },
 
-    async updateForumTopic({ topicId, authorUserId, canManageAll = false, sectionSlug, title, body }) {
+    async updateForumTopic({ topicId, authorUserId, canManageAll = false, canManageEditorial = false, sectionSlug, title, body, imageUrl, featuredMain }) {
       const normalizedSectionSlug = String(sectionSlug ?? '').trim();
       const normalizedTitle = String(title ?? '').trim();
       const normalizedBody = String(body ?? '').trim();
@@ -2671,22 +2697,40 @@ export function createPostgresRepository(pool) {
         await client.query('begin');
         const section = await client.query('select id from forum_sections where slug = $1 limit 1', [normalizedSectionSlug]);
         if (!section.rows[0]) throw new Error(`Unknown sectionSlug: ${normalizedSectionSlug}`);
+
+        const assignments = [
+          'section_id = $1',
+          'title = $2',
+          'body = $3',
+          'updated_at = now()',
+        ];
+        const values = [section.rows[0].id, normalizedTitle, normalizedBody];
+        if (imageUrl !== undefined) {
+          values.push(imageUrl ?? null);
+          assignments.push(`image_url = $${values.length}`);
+        }
+        if (featuredMain !== undefined) {
+          values.push(Boolean(featuredMain));
+          assignments.push(`featured_main = $${values.length}`);
+        }
+        values.push(topicId, canManageAll, canManageEditorial, authorUserId);
+        const topicIdIdx = values.length - 3;
+        const canManageAllIdx = values.length - 2;
+        const canManageEditorialIdx = values.length - 1;
+        const authorIdx = values.length;
         const { rows } = await client.query(
           `
           update forum_topics
-          set section_id = $1,
-              title = $2,
-              body = $3,
-              updated_at = now()
-          where id = $4
-            and ($5::boolean = true or author_user_id = $6)
+          set ${assignments.join(',\n              ')}
+          where id = $${topicIdIdx}
+            and ($${canManageAllIdx}::boolean = true or $${canManageEditorialIdx}::boolean = true or author_user_id = $${authorIdx})
             and status in ('open', 'closed')
           returning id
           `,
-          [section.rows[0].id, normalizedTitle, normalizedBody, topicId, canManageAll, authorUserId],
+          values,
         );
         if (!rows[0]) {
-          throw new Error('Only the owner can edit this topic');
+          throw new Error('Only the owner or an editor/admin can edit this topic');
         }
         await client.query('commit');
         return await this.getForumTopic({ id: topicId });
@@ -2996,16 +3040,17 @@ export function createPostgresRepository(pool) {
       }));
     },
 
-    async updateAuthorPageFlags({ authorId, isClassic = false, isMemorialPage = false }) {
+    async updateAuthorPageFlags({ authorId, isClassic = false, isMemorialPage = false, isChild = false }) {
       await pool.query(
         `
         update author_profiles
         set is_classic = $1,
             is_memorial_page = $2,
+            is_child = $3,
             updated_at = now()
-        where user_id = $3
+        where user_id = $4
         `,
-        [Boolean(isClassic), Boolean(isMemorialPage), authorId],
+        [Boolean(isClassic), Boolean(isMemorialPage), Boolean(isChild), authorId],
       );
       return this.getAuthor({ id: authorId });
     },
@@ -3127,7 +3172,7 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
-               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.peach_balance, ap.audio_upload_slots
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.is_child, ap.peach_balance, ap.audio_upload_slots
         from managed_author_accounts maa
         join users u on u.id = maa.managed_user_id
         left join author_profiles ap on ap.user_id = u.id
@@ -3146,7 +3191,7 @@ export function createPostgresRepository(pool) {
       const { rows } = await pool.query(
         `
         select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
-               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.peach_balance, ap.audio_upload_slots
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.cover_image_position_x, ap.cover_image_position_y, ap.cover_image_scale, ap.city, ap.website_url, ap.birth_date, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured, ap.is_memorial_page, ap.is_child, ap.peach_balance, ap.audio_upload_slots
         from managed_author_accounts maa
         join users u on u.id = maa.managed_user_id
         left join author_profiles ap on ap.user_id = u.id
@@ -3395,9 +3440,10 @@ export function createPostgresRepository(pool) {
             work_id,
             duration_seconds,
             audio_url,
-            source_url
+            source_url,
+            creator_user_id
           )
-          values ($1, $2, $3, $4, $5, $6)
+          values ($1, $2, $3, $4, $5, $6, $7)
           returning *
           `,
           [
@@ -3407,6 +3453,7 @@ export function createPostgresRepository(pool) {
             normalizedDuration,
             normalizedAudioUrl,
             normalizeOptionalText(sourceUrl),
+            creatorUserId || null,
           ],
         );
         await client.query('commit');
@@ -3417,6 +3464,66 @@ export function createPostgresRepository(pool) {
       } finally {
         client.release();
       }
+    },
+
+    async updateRadioTrack({ id, title, authorName, canManageAll, requestingUserId }) {
+      const { rows: existing } = await pool.query('select * from radio_tracks where id = $1', [id]);
+      if (!existing[0]) throw new Error('Track not found');
+      const track = radioTrackFromRow(existing[0]);
+      if (!canManageAll && String(track.creatorUserId) !== String(requestingUserId)) {
+        throw new Error('Only the track author or the owner can edit this track.');
+      }
+      const nextTitle = title != null ? String(title).trim() : track.title;
+      if (!nextTitle) throw new Error('Title cannot be empty.');
+      const nextAuthor = authorName != null ? normalizeOptionalText(authorName) : track.authorName;
+      const { rows } = await pool.query(
+        'update radio_tracks set title = $1, author_name = $2, updated_at = now() where id = $3 returning *',
+        [nextTitle, nextAuthor, id],
+      );
+      return radioTrackFromRow(rows[0]);
+    },
+
+    async deleteRadioTrack({ id, canManageAll, requestingUserId }) {
+      const { rows: existing } = await pool.query('select * from radio_tracks where id = $1', [id]);
+      if (!existing[0]) throw new Error('Track not found');
+      const track = radioTrackFromRow(existing[0]);
+      if (!canManageAll && String(track.creatorUserId) !== String(requestingUserId)) {
+        throw new Error('Only the track author or the owner can delete this track.');
+      }
+      const { rows } = await pool.query('delete from radio_tracks where id = $1 returning *', [id]);
+      return radioTrackFromRow(rows[0]);
+    },
+
+    async listRadioTracksByCreator({ creatorUserId, limit = 50, offset = 0 } = {}) {
+      const page = buildLimitOffset(limit, offset);
+      const { rows } = await pool.query(
+        `
+        select rt.*,
+               coalesce(avg(rtr.rating), 0)::numeric(4,2) as average_rating,
+               count(rtr.id)::int as ratings_count
+        from radio_tracks rt
+        left join radio_track_ratings rtr on rtr.track_id = rt.id
+        where rt.creator_user_id = $1
+        group by rt.id
+        order by rt.created_at desc
+        limit $2 offset $3
+        `,
+        [creatorUserId, page.limit, page.offset],
+      );
+      return rows.map(radioTrackFromRow);
+    },
+
+    async upsertSiteSetting({ key, value }) {
+      const { rows } = await pool.query(
+        'insert into site_settings (key, value) values ($1, $2) on conflict (key) do update set value = excluded.value returning *',
+        [key, value],
+      );
+      return rows[0];
+    },
+
+    async listSiteSettings() {
+      const { rows } = await pool.query('select key, value from site_settings order by key');
+      return rows;
     },
 
     async listRadioTracks({ limit = 20, offset = 0 } = {}) {

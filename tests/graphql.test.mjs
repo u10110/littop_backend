@@ -9,8 +9,6 @@ function makeFakeRepo() {
   let workId = 100;
   const users = [];
   const works = [];
-  const workLikes = new Set();
-  const workDislikes = new Set();
 
   return {
     async ping() {
@@ -101,8 +99,6 @@ function makeFakeRepo() {
         commentsCount: 0,
         ratingsCount: 0,
         averageRating: 0,
-        likesCount: 0,
-        dislikesCount: 0,
         publishedAt: new Date().toISOString(),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -112,46 +108,6 @@ function makeFakeRepo() {
     },
     async getWorkById(id) {
       return works.find((work) => String(work.id) === String(id)) ?? null;
-    },
-    async hasUserLikedWork({ workId, userId }) {
-      return workLikes.has(`${workId}:${userId}`);
-    },
-    async hasUserDislikedWork({ workId, userId }) {
-      return workDislikes.has(`${workId}:${userId}`);
-    },
-    async toggleWorkLike({ workId, userId }) {
-      const key = `${workId}:${userId}`;
-      const work = works.find((item) => String(item.id) === String(workId));
-      if (!work) return null;
-      if (workLikes.has(key)) {
-        workLikes.delete(key);
-        work.likesCount = Math.max(0, work.likesCount - 1);
-      } else {
-        if (workDislikes.has(key)) {
-          workDislikes.delete(key);
-          work.dislikesCount = Math.max(0, work.dislikesCount - 1);
-        }
-        workLikes.add(key);
-        work.likesCount += 1;
-      }
-      return work;
-    },
-    async toggleWorkDislike({ workId, userId }) {
-      const key = `${workId}:${userId}`;
-      const work = works.find((item) => String(item.id) === String(workId));
-      if (!work) return null;
-      if (workDislikes.has(key)) {
-        workDislikes.delete(key);
-        work.dislikesCount = Math.max(0, work.dislikesCount - 1);
-      } else {
-        if (workLikes.has(key)) {
-          workLikes.delete(key);
-          work.likesCount = Math.max(0, work.likesCount - 1);
-        }
-        workDislikes.add(key);
-        work.dislikesCount += 1;
-      }
-      return work;
     },
     async upsertWorkRating({ workId, userId, rating }) {
       const work = works.find((item) => String(item.id) === String(workId));
@@ -206,8 +162,7 @@ test('register mutation returns token and user', async () => {
         email: 'neo@example.com',
         login: 'neo',
         password: 's3cret-pass',
-        displayName: 'Neo',
-        acceptTerms: true
+        displayName: 'Neo'
       }
     }
   }, {
