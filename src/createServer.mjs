@@ -458,6 +458,7 @@ const typeDefs = `#graphql
     adminSwitchManagedAuthor(managedUserId: ID!): AuthPayload!
     adminGrantPeaches(login: String!, amount: Int!, note: String): User!
     closeMyAccount: Boolean!
+    adminDeleteUser(userId: ID!): Boolean!
     createWork(input: CreateWorkInput!): Work!
     adminCreateWork(authorId: ID!, input: CreateWorkInput!): Work!
     updateWork(workId: ID!, input: UpdateWorkInput!): Work!
@@ -476,6 +477,8 @@ const typeDefs = `#graphql
     createForumTopic(input: CreateForumTopicInput!): ForumTopic!
     updateForumTopic(topicId: ID!, input: UpdateForumTopicInput!): ForumTopic!
     deleteForumTopic(topicId: ID!): ForumTopic!
+    closeForumTopic(topicId: ID!): ForumTopic!
+    openForumTopic(topicId: ID!): ForumTopic!
     incrementForumTopicViews(topicId: ID!): ForumTopic!
     createForumPost(topicId: ID!, body: String!, parentPostId: ID, imageUrl: String): ForumPost!
     updateForumPost(postId: ID!, body: String!, imageUrl: String): ForumPost!
@@ -902,6 +905,21 @@ const resolvers = {
       const user = requireAuth(currentUser);
       return repo.closeUserAccount({ userId: user.id });
     },
+    adminDeleteUser: async (_, { userId }, { currentUser, repo, adminUserIds }) => {
+      const actor = requireAuth(currentUser);
+      if (!isAdminUser(actor, adminUserIds)) {
+        throw new GraphQLError('Только администратор может удалять аккаунты', { extensions: { code: 'FORBIDDEN' } });
+      }
+      if (String(actor.id) === String(userId)) {
+        throw new GraphQLError('Администратор не может удалить сам себя', { extensions: { code: 'FORBIDDEN' } });
+      }
+      const target = await repo.getUserById(userId);
+      if (target?.role === 'admin') {
+        throw new GraphQLError('Нельзя удалить другого администратора', { extensions: { code: 'FORBIDDEN' } });
+      }
+      await repo.closeUserAccount({ userId });
+      return true;
+    },
     createWork: async (_, { input }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
       return repo.createWork({ ...input, authorUserId: user.id });
@@ -1002,6 +1020,22 @@ const resolvers = {
     deleteForumTopic: async (_, { topicId }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
       return repo.softDeleteForumTopic({ topicId, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds) });
+    },
+    closeForumTopic: async (_, { topicId }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      const topic = await repo.getForumTopic({ id: topicId });
+      if (!topic) throw new GraphQLError('Тема не найдена.', { extensions: { code: 'NOT_FOUND' } });
+      const isOwner = String(topic.author?.id) === String(user.id);
+      if (!isAdminUser(user, adminUserIds) && !isOwner) throw new GraphQLError('Только автор темы или администратор может закрывать тему.', { extensions: { code: 'FORBIDDEN' } });
+      return repo.setForumTopicStatus({ topicId, status: 'closed', canManageAll: true });
+    },
+    openForumTopic: async (_, { topicId }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      const topic = await repo.getForumTopic({ id: topicId });
+      if (!topic) throw new GraphQLError('Тема не найдена.', { extensions: { code: 'NOT_FOUND' } });
+      const isOwner = String(topic.author?.id) === String(user.id);
+      if (!isAdminUser(user, adminUserIds) && !isOwner) throw new GraphQLError('Только автор темы или администратор может открывать тему.', { extensions: { code: 'FORBIDDEN' } });
+      return repo.setForumTopicStatus({ topicId, status: 'open', canManageAll: true });
     },
     incrementForumTopicViews: async (_, { topicId }, { repo }) => {
       const topic = await repo.incrementForumTopicViews({ topicId });
