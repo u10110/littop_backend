@@ -87,12 +87,14 @@ function setCorsHeaders(req, res) {
 }
 
 function sendJson(res, statusCode, payload) {
+  if (res.headersSent || res.writableEnded) return;
   res.statusCode = statusCode;
   res.setHeader('content-type', 'application/json; charset=utf-8');
   res.end(JSON.stringify(payload));
 }
 
 function sendText(res, statusCode, message) {
+  if (res.headersSent || res.writableEnded) return;
   res.statusCode = statusCode;
   res.setHeader('content-type', 'text/plain; charset=utf-8');
   res.end(message);
