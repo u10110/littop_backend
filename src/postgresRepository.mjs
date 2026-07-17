@@ -2791,6 +2791,28 @@ export function createPostgresRepository(pool) {
       }
     },
 
+    async setForumTopicStatus({ topicId, status, canManageAll = false }) {
+      if (!canManageAll) throw new Error('Only admin can change topic status');
+      const client = await pool.connect();
+      try {
+        const updated = await client.query(
+          `
+          update forum_topics
+          set status = $1,
+              updated_at = now()
+          where id = $2
+            and status <> 'archived'
+          returning id
+          `,
+          [status, topicId],
+        );
+        if (updated.rowCount === 0) throw new Error('Topic not found or already archived');
+        return await this.getForumTopic({ id: topicId });
+      } finally {
+        client.release();
+      }
+    },
+
     async createForumPost({ topicId, authorUserId, body, parentPostId = null, imageUrl = null }) {
       const client = await pool.connect();
       try {
