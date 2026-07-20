@@ -109,6 +109,7 @@ const typeDefs = `#graphql
     likedByMe: Boolean!
     dislikedByMe: Boolean!
     announcementActive: Boolean!
+    announcementCount: Int!
     publishedAt: String
     createdAt: String!
     updatedAt: String!
@@ -467,6 +468,7 @@ const typeDefs = `#graphql
     deleteRadioTrack(id: ID!): RadioTrack!
     updateSiteSetting(key: String!, value: String!): SiteSetting!
     activateWorkAnnouncement(workId: ID!): Work!
+    deactivateWorkAnnouncement(workId: ID!): Work!
     toggleWorkLike(workId: ID!): Work!
     toggleWorkDislike(workId: ID!): Work!
     rateWork(workId: ID!, rating: Int!): WorkRating!
@@ -945,6 +947,14 @@ const resolvers = {
       const user = requireAuth(currentUser);
       const isAdmin = isAdminUser(user, adminUserIds);
       return repo.activateWorkAnnouncement({ workId, activatedByUserId: user.id, isAdmin });
+    },
+    deactivateWorkAnnouncement: async (_, { workId }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      const isAdmin = isAdminUser(user, adminUserIds);
+      if (!isAdmin) {
+        throw new GraphQLError('Admin only', { extensions: { code: 'FORBIDDEN' } });
+      }
+      return repo.deactivateWorkAnnouncement({ workId });
     },
     toggleWorkLike: async (_, { workId }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
