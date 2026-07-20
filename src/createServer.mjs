@@ -422,6 +422,7 @@ const typeDefs = `#graphql
     author(id: ID, login: String): Author
     works(limit: Int = 20, offset: Int = 0, sectionCode: String, genreSlug: String, authorId: ID, search: String, status: String = "published", createdToday: Boolean): [Work!]!
     announcedWorks(limit: Int = 12): [Work!]!
+    announcements(limit: Int = 12): [Work!]!
     work(id: ID, slug: String): Work
     workComments(workId: ID!, limit: Int = 50, offset: Int = 0): [WorkComment!]!
     workViewers(workId: ID!, limit: Int = 100): [WorkViewer!]!
@@ -625,6 +626,7 @@ const resolvers = {
     author: async (_, args, { repo }) => repo.getAuthor(args),
     works: async (_, args, { repo }) => repo.listWorks(args),
     announcedWorks: async (_, args, { repo }) => repo.listAnnouncedWorks(args),
+    announcements: async (_, args, { repo }) => repo.listAnnouncedWorks(args),
     work: async (_, args, { repo, currentUser }) => {
       const work = args.id
         ? await repo.getWorkById(args.id)
