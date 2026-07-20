@@ -1922,20 +1922,6 @@ export function createPostgresRepository(pool) {
       const client = await pool.connect();
       try {
         await client.query('begin');
-        const work = await client.query(
-          `
-          select id, announcement_active
-          from works
-          where id = $1
-          limit 1
-          `,
-          [workId],
-        );
-        if (!work.rows[0] || !work.rows[0].announcement_active) {
-          await client.query('commit');
-          return await this.getWorkById(workId);
-        }
-
         await client.query(
           `
           delete from work_announcements
@@ -1943,6 +1929,7 @@ export function createPostgresRepository(pool) {
           `,
           [workId],
         );
+
 
         await client.query(
           `
@@ -1969,7 +1956,7 @@ export function createPostgresRepository(pool) {
         await client.query('begin');
         const work = await client.query(
           `
-          select id, author_id, announcement_active
+          select id, author_user_id, announcement_active
           from works
           where id = $1 and status = 'published'
           limit 1
@@ -2060,7 +2047,7 @@ export function createPostgresRepository(pool) {
           [workId, activatedByUserId],
         );
 
-        const authorId = work.rows[0].author_id;
+        const authorId = work.rows[0].author_user_id;
         if (authorId) {
           await awardRatingEvent(
             {
