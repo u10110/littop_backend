@@ -109,6 +109,7 @@ const typeDefs = `#graphql
     likedByMe: Boolean!
     dislikedByMe: Boolean!
     announcementActive: Boolean!
+    announcementCount: Int!
     publishedAt: String
     createdAt: String!
     updatedAt: String!
@@ -421,6 +422,7 @@ const typeDefs = `#graphql
     author(id: ID, login: String): Author
     works(limit: Int = 20, offset: Int = 0, sectionCode: String, genreSlug: String, authorId: ID, search: String, status: String = "published", createdToday: Boolean): [Work!]!
     announcedWorks(limit: Int = 12): [Work!]!
+    announcements(limit: Int = 12): [Work!]!
     work(id: ID, slug: String): Work
     workComments(workId: ID!, limit: Int = 50, offset: Int = 0): [WorkComment!]!
     workViewers(workId: ID!, limit: Int = 100): [WorkViewer!]!
@@ -467,6 +469,7 @@ const typeDefs = `#graphql
     deleteRadioTrack(id: ID!): RadioTrack!
     updateSiteSetting(key: String!, value: String!): SiteSetting!
     activateWorkAnnouncement(workId: ID!): Work!
+    deactivateWorkAnnouncement(workId: ID!): Work!
     toggleWorkLike(workId: ID!): Work!
     toggleWorkDislike(workId: ID!): Work!
     rateWork(workId: ID!, rating: Int!): WorkRating!
@@ -623,6 +626,7 @@ const resolvers = {
     author: async (_, args, { repo }) => repo.getAuthor(args),
     works: async (_, args, { repo }) => repo.listWorks(args),
     announcedWorks: async (_, args, { repo }) => repo.listAnnouncedWorks(args),
+    announcements: async (_, args, { repo }) => repo.listAnnouncedWorks(args),
     work: async (_, args, { repo, currentUser }) => {
       const work = args.id
         ? await repo.getWorkById(args.id)
@@ -945,6 +949,14 @@ const resolvers = {
       const user = requireAuth(currentUser);
       const isAdmin = isAdminUser(user, adminUserIds);
       return repo.activateWorkAnnouncement({ workId, activatedByUserId: user.id, isAdmin });
+    },
+    deactivateWorkAnnouncement: async (_, { workId }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      const isAdmin = isAdminUser(user, adminUserIds);
+      if (!isAdmin) {
+        throw new GraphQLError('Admin only', { extensions: { code: 'FORBIDDEN' } });
+      }
+      return repo.deactivateWorkAnnouncement({ workId });
     },
     toggleWorkLike: async (_, { workId }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);

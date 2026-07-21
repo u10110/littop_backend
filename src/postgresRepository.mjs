@@ -131,6 +131,7 @@ function workFromRow(row) {
     likesCount: Number(row.likes_count ?? 0),
     dislikesCount: Number(row.dislikes_count ?? 0),
     announcementActive: Boolean(row.announcement_active),
+    announcementCount: Number(row.announcement_count ?? 0),
     publishedAt: row.published_at?.toISOString?.() ?? row.published_at,
     createdAt: row.created_at?.toISOString?.() ?? row.created_at,
     updatedAt: row.updated_at?.toISOString?.() ?? row.updated_at,
@@ -1917,13 +1918,45 @@ export function createPostgresRepository(pool) {
       return rows.map(workFromRow);
     },
 
+    async deactivateWorkAnnouncement({ workId }) {
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        await client.query(
+          `
+          delete from work_announcements
+          where work_id = $1
+          `,
+          [workId],
+        );
+
+
+        await client.query(
+          `
+          update works
+          set announcement_active = false
+          where id = $1
+          `,
+          [workId],
+        );
+
+        await client.query('commit');
+        return await this.getWorkById(workId);
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
     async activateWorkAnnouncement({ workId, activatedByUserId, isAdmin = false }) {
       const client = await pool.connect();
       try {
         await client.query('begin');
         const work = await client.query(
           `
-          select id
+          select id, author_user_id, announcement_active
           from works
           where id = $1 and status = 'published'
           limit 1
@@ -1951,6 +1984,25 @@ export function createPostgresRepository(pool) {
         const stats = await client.query('select count(*)::int as cnt from work_announcements');
         const activeCount = Number(stats.rows[0]?.cnt ?? 0);
         if (activeCount >= 12) {
+          const oldest = await client.query(
+            `
+            select work_id
+            from work_announcements
+            order by created_at asc, id asc
+            limit 1
+            `,
+          );
+          const oldestWorkId = oldest.rows[0]?.work_id;
+          if (oldestWorkId) {
+            await client.query(
+              `
+              update works
+              set announcement_active = false
+              where id = $1
+              `,
+              [oldestWorkId],
+            );
+          }
           await client.query(
             `
             delete from work_announcements
@@ -1979,11 +2031,36 @@ export function createPostgresRepository(pool) {
 
         await client.query(
           `
+          update works
+          set announcement_active = true,
+              announcement_count = coalesce(announcement_count, 0) + 1
+          where id = $1
+          `,
+          [workId],
+        );
+
+        await client.query(
+          `
           insert into work_announcements (work_id, activated_by_user_id)
           values ($1, $2)
           `,
           [workId, activatedByUserId],
         );
+
+        const authorId = work.rows[0].author_user_id;
+        if (authorId) {
+          await awardRatingEvent(
+            {
+              userId: authorId,
+              eventType: 'work_announcement',
+              eventKey: `work_announcement:${workId}:${activatedByUserId}:${Date.now()}`,
+              points: 50,
+              meta: { workId, activatedByUserId },
+            },
+            client,
+          );
+        }
+
         await client.query('commit');
         return await this.getWorkById(workId);
       } catch (error) {
