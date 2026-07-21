@@ -3139,6 +3139,29 @@ export function createPostgresRepository(pool) {
       }));
     },
 
+    async listGrantedPeachTransactions({ userId, limit = 100 } = {}) {
+      if (!userId) return [];
+      const page = buildLimitOffset(limit, 0);
+      const { rows } = await pool.query(
+        `
+        select id, amount, kind, note, created_at, user_id as target_user_id
+        from peach_transactions
+        where created_by_user_id = $1
+        order by created_at desc, id desc
+        limit $2
+        `,
+        [userId, page.limit],
+      );
+      return rows.map((row) => ({
+        id: row.id,
+        amount: Number(row.amount ?? 0),
+        kind: row.kind,
+        note: row.note ?? null,
+        createdAt: toIsoDate(row.created_at),
+        targetUserId: row.target_user_id ?? null,
+      }));
+    },
+
     async updateAuthorPageFlags({ authorId, isClassic = false, isMemorialPage = false, isChild = false }) {
       await pool.query(
         `

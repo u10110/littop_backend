@@ -440,6 +440,7 @@ const typeDefs = `#graphql
     myManagedAuthors(limit: Int = 100): [Author!]!
     myRatingEvents(limit: Int = 50): [AuthorRatingEvent!]!
     myPeachTransactions(limit: Int = 50): [PeachTransaction!]!
+    myGrantedPeaches(limit: Int = 100): [PeachTransaction!]!
     contests(status: String, scope: String, limit: Int = 20, offset: Int = 0): [Contest!]!
     radioTracks(limit: Int = 20, offset: Int = 0): [RadioTrack!]!
     radioTracksByCreator(creatorUserId: ID!): [RadioTrack!]!
@@ -670,6 +671,13 @@ const resolvers = {
     },
     myRatingEvents: async (_, args, { repo, currentUser }) => repo.listUserRatingEvents({ userId: requireAuth(currentUser).id, limit: args.limit ?? 50 }),
     myPeachTransactions: async (_, args, { repo, currentUser }) => repo.listUserPeachTransactions({ userId: requireAuth(currentUser).id, limit: args.limit ?? 50 }),
+    myGrantedPeaches: async (_, args, { repo, currentUser, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      if (!isAdminUser(user, adminUserIds)) {
+        throw new GraphQLError('Only admin can inspect granted peaches', { extensions: { code: 'FORBIDDEN' } });
+      }
+      return repo.listGrantedPeachTransactions({ userId: user.id, limit: args.limit ?? 100 });
+    },
     contests: async (_, args, { repo }) => repo.listContests(args),
     radioTracks: async (_, args, { repo }) => repo.listRadioTracks(args),
     radioTracksByCreator: async (_, { creatorUserId }, { repo }) => repo.listRadioTracksByCreator({ creatorUserId }),
