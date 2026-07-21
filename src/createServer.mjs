@@ -667,7 +667,7 @@ const resolvers = {
       if (!isAdminUser(user, adminUserIds)) {
         throw new GraphQLError('Only admin can inspect managed accounts', { extensions: { code: 'FORBIDDEN' } });
       }
-      return repo.listManagedAuthorAccounts({ ownerUserId: user.id, limit: args.limit ?? 100 });
+      return repo.listManagedAuthorAccounts({ ownerUserId: null, limit: args.limit ?? 100 });
     },
     myRatingEvents: async (_, args, { repo, currentUser }) => repo.listUserRatingEvents({ userId: requireAuth(currentUser).id, limit: args.limit ?? 50 }),
     myPeachTransactions: async (_, args, { repo, currentUser }) => repo.listUserPeachTransactions({ userId: requireAuth(currentUser).id, limit: args.limit ?? 50 }),
@@ -899,7 +899,7 @@ const resolvers = {
       if (!isAdminUser(user, adminUserIds)) {
         throw new GraphQLError('Only admin can switch into managed accounts', { extensions: { code: 'FORBIDDEN' } });
       }
-      const allowed = await repo.getManagedAuthorAccount({ ownerUserId: user.id, managedUserId });
+      const allowed = await repo.getManagedAuthorAccount({ managedUserId });
       const managedUser = await repo.getUserById(managedUserId);
       if (!allowed || !managedUser) {
         throw new GraphQLError('Managed account not found', { extensions: { code: 'NOT_FOUND' } });

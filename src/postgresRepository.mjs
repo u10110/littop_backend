@@ -2700,7 +2700,7 @@ export function createPostgresRepository(pool) {
         left join forum_tags tg on tg.id = ftt.tag_id
         ${where ? `${where} and ft.status in ('open', 'closed')` : `where ft.status in ('open', 'closed')`}
         group by ft.id, fs.slug, u.id, ap.user_id
-        order by ft.is_pinned desc, coalesce(ft.last_post_at, ft.created_at) desc
+        order by ft.is_pinned desc, (case when fs.slug = 'editor-column' then ft.created_at else coalesce(ft.last_post_at, ft.created_at) end) desc
         limit $${params.length - 1} offset $${params.length}
         `,
         params,
@@ -3289,8 +3289,13 @@ export function createPostgresRepository(pool) {
     },
 
     async listManagedAuthorAccounts({ ownerUserId, limit = 100 } = {}) {
-      if (!ownerUserId) return [];
       const page = buildLimitOffset(limit, 0);
+      const params = [];
+      let ownerClause = '';
+      if (ownerUserId) {
+        params.push(ownerUserId);
+        ownerClause = `maa.owner_user_id = $${params.length} and `;
+      }
       const { rows } = await pool.query(
         `
         select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
@@ -3298,18 +3303,23 @@ export function createPostgresRepository(pool) {
         from managed_author_accounts maa
         join users u on u.id = maa.managed_user_id
         left join author_profiles ap on ap.user_id = u.id
-        where maa.owner_user_id = $1
-          and u.status <> 'deleted'
+        where ${ownerClause}u.status <> 'deleted'
         order by maa.created_at desc, maa.managed_user_id desc
-        limit $2
+        limit $${params.length + 1}
         `,
-        [ownerUserId, page.limit],
+        [...params, page.limit],
       );
       return rows.map(authorFromRow);
     },
 
-    async getManagedAuthorAccount({ ownerUserId, managedUserId }) {
-      if (!ownerUserId || !managedUserId) return null;
+    async getManagedAuthorAccount({ ownerUserId = null, managedUserId }) {
+      if (!managedUserId) return null;
+      const params = [];
+      let ownerClause = '';
+      if (ownerUserId) {
+        params.push(ownerUserId);
+        ownerClause = `maa.owner_user_id = $${params.length} and `;
+      }
       const { rows } = await pool.query(
         `
         select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
@@ -3317,10 +3327,10 @@ export function createPostgresRepository(pool) {
         from managed_author_accounts maa
         join users u on u.id = maa.managed_user_id
         left join author_profiles ap on ap.user_id = u.id
-        where maa.owner_user_id = $1 and maa.managed_user_id = $2
+        where ${ownerClause}maa.managed_user_id = $${params.length + 1}
         limit 1
         `,
-        [ownerUserId, managedUserId],
+        [...params, managedUserId],
       );
       return rows.map(authorFromRow)[0] ?? null;
     },
