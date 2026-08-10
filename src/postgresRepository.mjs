@@ -90,6 +90,7 @@ function workFromRow(row) {
     ratingsCount: Number(row.ratings_count ?? 0),
     averageRating: Number(row.average_rating ?? 0),
     likesCount: Number(row.likes_count ?? 0),
+    viewsCount: Number(row.views_count ?? 0),
     publishedAt: row.published_at?.toISOString?.() ?? row.published_at,
     createdAt: row.created_at?.toISOString?.() ?? row.created_at,
     updatedAt: row.updated_at?.toISOString?.() ?? row.updated_at,
@@ -1253,6 +1254,7 @@ export function createPostgresRepository(pool) {
         `
         select w.*, ws.code as section_code, wg.slug as genre_slug,
                (select count(*)::int from work_likes wl where wl.work_id = w.id) as likes_count,
+               (select count(*)::int from work_views wv where wv.work_id = w.id) as views_count,
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
@@ -1278,6 +1280,7 @@ export function createPostgresRepository(pool) {
         `
         select w.*, ws.code as section_code, wg.slug as genre_slug,
                (select count(*)::int from work_likes wl where wl.work_id = w.id) as likes_count,
+               (select count(*)::int from work_views wv where wv.work_id = w.id) as views_count,
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
@@ -1302,6 +1305,7 @@ export function createPostgresRepository(pool) {
         `
         select w.*, ws.code as section_code, wg.slug as genre_slug,
                (select count(*)::int from work_likes wl where wl.work_id = w.id) as likes_count,
+               (select count(*)::int from work_views wv where wv.work_id = w.id) as views_count,
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
                ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,

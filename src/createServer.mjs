@@ -74,6 +74,7 @@ const typeDefs = `#graphql
     ratingsCount: Int!
     averageRating: Float!
     likesCount: Int!
+    viewsCount: Int!
     likedByMe: Boolean!
     publishedAt: String
     createdAt: String!
