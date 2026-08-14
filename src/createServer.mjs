@@ -82,6 +82,12 @@ const typeDefs = `#graphql
     author: Author!
   }
 
+  type WorkGenre {
+    slug: String!
+    name: String!
+    sectionCode: String!
+  }
+
   type WorkRating {
     id: ID
     workId: ID!
@@ -291,7 +297,8 @@ const typeDefs = `#graphql
     onlineAuthors(limit: Int = 12): [Author!]!
     todayVisitors(limit: Int = 12): [Author!]!
     author(id: ID, login: String): Author
-    works(limit: Int = 20, offset: Int = 0, sectionCode: String, genreSlug: String, authorId: ID, search: String, status: String = "published"): [Work!]!
+    works(limit: Int = 20, offset: Int = 0, sectionCode: String, genreSlug: String, authorId: ID, search: String, status: String = "published", createdToday: Boolean): [Work!]!
+    workGenres(sectionCode: String): [WorkGenre!]!
     announcedWorks(limit: Int = 12): [Work!]!
     recentWorkComments(limit: Int = 12): [HomeComment!]!
     work(id: ID, slug: String): Work
@@ -376,6 +383,7 @@ const resolvers = {
     todayVisitors: async (_, args, { repo }) => repo.listTodayVisitors(args),
     author: async (_, args, { repo }) => repo.getAuthor(args),
     works: async (_, args, { repo }) => repo.listWorks(args),
+    workGenres: async (_, args, { repo }) => repo.listWorkGenres(args),
     announcedWorks: async (_, args, { repo }) => repo.listAnnouncedWorks(args),
     recentWorkComments: async (_, args, { repo }) => repo.listRecentWorkComments(args),
     work: async (_, args, { repo, currentUser }) => {

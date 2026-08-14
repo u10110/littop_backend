@@ -1243,7 +1243,7 @@ export function createPostgresRepository(pool) {
       return { totalViews, lockedViews, batchSize, visitors: rows.map(pageVisitorFromRow) };
     },
 
-    async listWorks({ limit = 20, offset = 0, sectionCode = null, genreSlug = null, authorId = null, search = null, status = 'published' } = {}) {
+    async listWorks({ limit = 20, offset = 0, sectionCode = null, genreSlug = null, authorId = null, search = null, status = 'published', createdToday = false } = {}) {
       const page = buildLimitOffset(limit, offset);
       const conditions = [];
       const params = [];
@@ -1266,6 +1266,9 @@ export function createPostgresRepository(pool) {
       if (status) {
         params.push(status);
         conditions.push(`w.status = $${params.length}`);
+      }
+      if (createdToday) {
+        conditions.push(`date(w.created_at) = current_date`);
       }
       params.push(page.limit, page.offset);
       const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
@@ -1292,6 +1295,28 @@ export function createPostgresRepository(pool) {
         params,
       );
       return rows.map(workFromRow);
+    },
+
+    async listWorkGenres({ sectionCode = null } = {}) {
+      const params = [];
+      const conditions = ["w.status = 'published'"];
+      if (sectionCode) {
+        params.push(sectionCode);
+        conditions.push(`ws.code = $${params.length}`);
+      }
+      const { rows } = await pool.query(
+        `
+        select wg.slug, wg.name, ws.code as section_code
+        from work_genres wg
+        join work_sections ws on ws.id = wg.section_id
+        join works w on w.genre_id = wg.id
+        where ${conditions.join(' and ')}
+        group by wg.id, wg.slug, wg.name, ws.code, wg.sort_order
+        order by ws.sort_order asc, wg.sort_order asc, wg.name asc
+        `,
+        params,
+      );
+      return rows.map((row) => ({ slug: row.slug, name: row.name, sectionCode: row.section_code }));
     },
 
     async listAnnouncedWorks({ limit = 12 } = {}) {

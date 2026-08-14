@@ -12,6 +12,7 @@ function makeFakeRepo() {
   return {
     async ping() { return true; },
     async listWorks() { return [work]; },
+    async listWorkGenres() { return [{ slug: 'lyric', name: 'Лирика', sectionCode: 'poetry' }]; },
     async getWorkById() { return work; },
     async getWorkBySlug() { return work; },
     async listAuthors() { return []; }, async listOnlineAuthors() { return []; }, async getAuthor() { return null; },
@@ -21,14 +22,15 @@ function makeFakeRepo() {
   };
 }
 
-test('works expose readership count in GraphQL previews', async () => {
+test('works expose readership count and catalogue filters in GraphQL previews', async () => {
   const repo = makeFakeRepo();
   const server = await createApolloServer({ repo, jwtSecret: 'test-secret' });
   const response = await server.executeOperation(
-    { query: `query { works(limit: 1) { title viewsCount } }` },
+    { query: `query { works(limit: 1, genreSlug: "lyric", createdToday: true) { title viewsCount } workGenres(sectionCode: "poetry") { slug name sectionCode } }` },
     { contextValue: { repo, jwtSecret: 'test-secret', currentUser: null, authHeader: '' } },
   );
   assert.equal(response.body.singleResult.errors, undefined);
   assert.equal(response.body.singleResult.data.works[0].title, 'Читаемый текст');
   assert.equal(response.body.singleResult.data.works[0].viewsCount, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(response.body.singleResult.data.workGenres)), [{ slug: 'lyric', name: 'Лирика', sectionCode: 'poetry' }]);
 });
