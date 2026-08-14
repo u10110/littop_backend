@@ -873,6 +873,25 @@ export function createPostgresRepository(pool) {
       return rows.map(authorFromRow);
     },
 
+    async listTodayVisitors({ limit = 12 } = {}) {
+      const page = buildLimitOffset(limit, 0);
+      const { rows } = await pool.query(
+        `
+        select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
+               ap.display_name, ap.bio, ap.avatar_url, ap.cover_image_url, ap.city, ap.website_url, ap.rating_total, ap.works_count_cached, ap.is_classic, ap.is_featured
+        from users u
+        join author_profiles ap on ap.user_id = u.id
+        where u.status <> 'deleted'
+          and coalesce(ap.is_classic, false) = false
+          and u.last_seen_at is not null
+          and u.last_seen_at >= date_trunc('day', now())
+        order by u.last_seen_at desc, u.registered_at desc
+        limit $1
+        `,
+        [page.limit],
+      );
+      return rows.map(authorFromRow);
+    },
 
     async getAuthor({ id = null, login = null } = {}) {
       const field = id != null ? 'u.id = $1' : 'u.login = $1';
@@ -1275,6 +1294,32 @@ export function createPostgresRepository(pool) {
       return rows.map(workFromRow);
     },
 
+    async listAnnouncedWorks({ limit = 12 } = {}) {
+      const page = buildLimitOffset(limit, 0);
+      const { rows } = await pool.query(
+        `
+        select w.*, ws.code as section_code, wg.slug as genre_slug,
+               (select count(*)::int from work_likes wl where wl.work_id = w.id) as likes_count,
+               u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
+               u.created_at as author_created_at, u.updated_at as author_updated_at,
+               ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
+               ap.website_url as author_website_url, ap.rating_total as author_rating_total,
+               ap.works_count_cached as author_works_count_cached, ap.is_classic as author_is_classic, ap.is_featured as author_is_featured
+        from work_announcements wa
+        join works w on w.id = wa.work_id
+        join work_sections ws on ws.id = w.section_id
+        left join work_genres wg on wg.id = w.genre_id
+        join users u on u.id = w.author_user_id
+        left join author_profiles ap on ap.user_id = u.id
+        where w.status = 'published'
+        order by wa.created_at desc, wa.id desc
+        limit $1
+        `,
+        [page.limit],
+      );
+      return rows.map(workFromRow);
+    },
+
     async getWorkById(id) {
       const { rows } = await pool.query(
         `
@@ -1631,6 +1676,43 @@ export function createPostgresRepository(pool) {
       } finally {
         client.release();
       }
+    },
+
+    async listRecentWorkComments({ limit = 12 } = {}) {
+      const page = buildLimitOffset(limit, 0);
+      const { rows } = await pool.query(
+        `
+        select wc.id, wc.body, wc.created_at, w.id as work_id, w.title as work_title, w.slug as work_slug,
+               u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
+               u.created_at as author_created_at, u.updated_at as author_updated_at,
+               ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url, ap.cover_image_url as author_cover_image_url, ap.city as author_city,
+               ap.website_url as author_website_url, ap.rating_total as author_rating_total,
+               ap.works_count_cached as author_works_count_cached, ap.is_classic as author_is_classic, ap.is_featured as author_is_featured
+        from work_comments wc
+        join works w on w.id = wc.work_id and w.status = 'published'
+        join users u on u.id = wc.user_id
+        left join author_profiles ap on ap.user_id = u.id
+        where wc.status = 'visible'
+        order by wc.created_at desc
+        limit $1
+        `,
+        [page.limit],
+      );
+      return rows.map((row) => ({
+        id: row.id,
+        body: row.body,
+        createdAt: toIsoDate(row.created_at),
+        work: { id: row.work_id, title: row.work_title, slug: row.work_slug },
+        author: authorFromRow({
+          id: row.author_id, email: row.author_email, login: row.author_login,
+          registered_at: row.author_registered_at, last_seen_at: row.author_last_seen_at,
+          created_at: row.author_created_at, updated_at: row.author_updated_at,
+          display_name: row.author_display_name, bio: row.author_bio, avatar_url: row.author_avatar_url,
+          cover_image_url: row.author_cover_image_url, city: row.author_city, website_url: row.author_website_url,
+          rating_total: row.author_rating_total, works_count_cached: row.author_works_count_cached,
+          is_classic: row.author_is_classic, is_featured: row.author_is_featured,
+        }),
+      }));
     },
 
     async listWorkComments({ workId, limit = 50, offset = 0 }) {
