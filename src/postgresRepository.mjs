@@ -2200,5 +2200,93 @@ export function createPostgresRepository(pool) {
       );
       return rows.map(radioTrackFromRow);
     },
+
+    async listConversations({ userId, limit = 30 }) {
+      const { rows } = await pool.query(
+        `
+        with participants as (
+          select case when sender_user_id = $1 then recipient_user_id else sender_user_id end as peer_user_id,
+                 max(created_at) as last_message_at
+          from direct_messages
+          where sender_user_id = $1 or recipient_user_id = $1
+          group by peer_user_id
+        )
+        select p.peer_user_id, p.last_message_at,
+               dm.body as last_message_body,
+               count(*) filter (where dm_all.recipient_user_id = $1 and dm_all.read_at is null)::int as unread_count,
+               u.id as peer_id, u.email as peer_email, u.login as peer_login,
+               u.registered_at as peer_registered_at, u.last_seen_at as peer_last_seen_at,
+               u.created_at as peer_created_at, u.updated_at as peer_updated_at,
+               ap.display_name as peer_display_name, ap.bio as peer_bio, ap.avatar_url as peer_avatar_url,
+               ap.cover_image_url as peer_cover_image_url, ap.city as peer_city, ap.website_url as peer_website_url,
+               ap.rating_total as peer_rating_total, ap.works_count_cached as peer_works_count_cached,
+               ap.is_classic as peer_is_classic, ap.is_featured as peer_is_featured
+        from participants p
+        join users u on u.id = p.peer_user_id
+        left join author_profiles ap on ap.user_id = u.id
+        join lateral (
+          select body from direct_messages
+          where (sender_user_id = $1 and recipient_user_id = p.peer_user_id)
+             or (recipient_user_id = $1 and sender_user_id = p.peer_user_id)
+          order by created_at desc, id desc limit 1
+        ) dm on true
+        left join direct_messages dm_all on ((dm_all.sender_user_id = $1 and dm_all.recipient_user_id = p.peer_user_id) or (dm_all.recipient_user_id = $1 and dm_all.sender_user_id = p.peer_user_id))
+        group by p.peer_user_id, p.last_message_at, dm.body, u.id, ap.user_id
+        order by p.last_message_at desc
+        limit $2
+        `,
+        [userId, Math.max(1, Math.min(Number(limit) || 30, 100))],
+      );
+      return rows.map((row) => ({
+        peerUserId: row.peer_user_id,
+        lastMessageBody: row.last_message_body,
+        lastMessageAt: toIsoDate(row.last_message_at),
+        unreadCount: Number(row.unread_count ?? 0),
+        peer: authorFromRow({
+          id: row.peer_id, email: row.peer_email, login: row.peer_login, registered_at: row.peer_registered_at,
+          last_seen_at: row.peer_last_seen_at, created_at: row.peer_created_at, updated_at: row.peer_updated_at,
+          display_name: row.peer_display_name, bio: row.peer_bio, avatar_url: row.peer_avatar_url,
+          cover_image_url: row.peer_cover_image_url, city: row.peer_city, website_url: row.peer_website_url,
+          rating_total: row.peer_rating_total, works_count_cached: row.peer_works_count_cached,
+          is_classic: row.peer_is_classic, is_featured: row.peer_is_featured,
+        }),
+      }));
+    },
+
+    async listDirectMessages({ userId, peerUserId }) {
+      const { rows } = await pool.query(
+        `select * from direct_messages
+         where (sender_user_id = $1 and recipient_user_id = $2)
+            or (sender_user_id = $2 and recipient_user_id = $1)
+         order by created_at asc, id asc`,
+        [userId, peerUserId],
+      );
+      await pool.query(
+        `update direct_messages set read_at = now()
+         where sender_user_id = $2 and recipient_user_id = $1 and read_at is null`,
+        [userId, peerUserId],
+      );
+      return rows.map((row) => ({ id: row.id, senderUserId: row.sender_user_id, recipientUserId: row.recipient_user_id, body: row.body, readAt: toIsoDate(row.read_at), createdAt: toIsoDate(row.created_at) }));
+    },
+
+    async sendDirectMessage({ senderUserId, recipientUserId, body }) {
+      const normalizedBody = String(body ?? '').trim();
+      if (!normalizedBody) throw new Error('Message body is required');
+      if (String(senderUserId) === String(recipientUserId)) throw new Error('Cannot send a message to yourself');
+      const { rows } = await pool.query(
+        `insert into direct_messages (sender_user_id, recipient_user_id, body)
+         select $1, id, $3 from users where id = $2 and status = 'active'
+         returning *`,
+        [senderUserId, recipientUserId, normalizedBody],
+      );
+      if (!rows[0]) throw new Error('Recipient not found');
+      const row = rows[0];
+      return { id: row.id, senderUserId: row.sender_user_id, recipientUserId: row.recipient_user_id, body: row.body, readAt: toIsoDate(row.read_at), createdAt: toIsoDate(row.created_at) };
+    },
+
+    async unreadDirectMessagesCount({ userId }) {
+      const { rows } = await pool.query('select count(*)::int as count from direct_messages where recipient_user_id = $1 and read_at is null', [userId]);
+      return Number(rows[0]?.count ?? 0);
+    },
   };
 }

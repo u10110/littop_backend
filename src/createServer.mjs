@@ -230,6 +230,23 @@ const typeDefs = `#graphql
     author: Author
   }
 
+  type DirectMessage {
+    id: ID!
+    senderUserId: ID!
+    recipientUserId: ID!
+    body: String!
+    readAt: String
+    createdAt: String!
+  }
+
+  type Conversation {
+    peerUserId: ID!
+    peer: Author!
+    lastMessageBody: String!
+    lastMessageAt: String!
+    unreadCount: Int!
+  }
+
   type AuthPayload {
     token: String!
     user: User!
@@ -313,11 +330,16 @@ const typeDefs = `#graphql
     forumTopic(id: ID, slug: String): ForumTopic
     contests(status: String, scope: String, limit: Int = 20, offset: Int = 0): [Contest!]!
     radioTracks(limit: Int = 20, offset: Int = 0): [RadioTrack!]!
+    myConversations(limit: Int = 30): [Conversation]!
+    directMessages(peerUserId: ID!): [DirectMessage]!
+    unreadDirectMessagesCount: Int!
   }
 
   type Mutation {
     register(input: RegisterInput!): AuthPayload!
     login(input: LoginInput!): AuthPayload!
+    requestPasswordReset(email: String!): Boolean!
+    resetPassword(token: String!, password: String!): AuthPayload!
     touchPresence: User!
     updateMyProfile(input: UpdateMyProfileInput!): User!
     closeMyAccount: Boolean!
@@ -336,6 +358,7 @@ const typeDefs = `#graphql
     createForumPost(topicId: ID!, body: String!, parentPostId: ID, imageUrl: String): ForumPost!
     updateForumPost(postId: ID!, body: String!, imageUrl: String): ForumPost!
     deleteForumPost(postId: ID!): ForumPost!
+    sendDirectMessage(peerUserId: ID!, body: String!): DirectMessage!
   }
 `;
 
@@ -418,6 +441,18 @@ const resolvers = {
     forumTopic: async (_, args, { repo }) => repo.getForumTopic(args),
     contests: async (_, args, { repo }) => repo.listContests(args),
     radioTracks: async (_, args, { repo }) => repo.listRadioTracks(args),
+    myConversations: async (_, { limit }, { currentUser, repo }) => {
+      const user = requireAuth(currentUser);
+      return repo.listConversations({ userId: user.id, limit });
+    },
+    directMessages: async (_, { peerUserId }, { currentUser, repo }) => {
+      const user = requireAuth(currentUser);
+      return repo.listDirectMessages({ userId: user.id, peerUserId });
+    },
+    unreadDirectMessagesCount: async (_, __, { currentUser, repo }) => {
+      const user = requireAuth(currentUser);
+      return repo.unreadDirectMessagesCount({ userId: user.id });
+    },
   },
   Mutation: {
     register: async (_, { input }, { repo, jwtSecret }) => {
@@ -527,6 +562,10 @@ const resolvers = {
     deleteForumPost: async (_, { postId }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
       return repo.softDeleteForumPost({ postId, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds) });
+    },
+    sendDirectMessage: async (_, { peerUserId, body }, { currentUser, repo }) => {
+      const user = requireAuth(currentUser);
+      return repo.sendDirectMessage({ senderUserId: user.id, recipientUserId: peerUserId, body });
     },
   },
   Author: {
