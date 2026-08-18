@@ -140,6 +140,20 @@ const typeDefs = `#graphql
     author: Author
   }
 
+  type HomeCommentWork {
+    id: ID!
+    title: String!
+    slug: String
+  }
+
+  type HomeComment {
+    id: ID!
+    body: String!
+    createdAt: String!
+    work: HomeCommentWork!
+    author: Author
+  }
+
   type WorkReaderLedger {
     totalViews: Int!
     lockedViews: Int!
@@ -423,6 +437,7 @@ const typeDefs = `#graphql
     works(limit: Int = 20, offset: Int = 0, sectionCode: String, genreSlug: String, authorId: ID, search: String, status: String = "published", createdToday: Boolean): [Work!]!
     announcedWorks(limit: Int = 12): [Work!]!
     announcements(limit: Int = 12): [Work!]!
+    recentWorkComments(limit: Int = 12): [HomeComment!]!
     work(id: ID, slug: String): Work
     workComments(workId: ID!, limit: Int = 50, offset: Int = 0): [WorkComment!]!
     workViewers(workId: ID!, limit: Int = 100): [WorkViewer!]!
@@ -628,6 +643,7 @@ const resolvers = {
     works: async (_, args, { repo }) => repo.listWorks(args),
     announcedWorks: async (_, args, { repo }) => repo.listAnnouncedWorks(args),
     announcements: async (_, args, { repo }) => repo.listAnnouncedWorks(args),
+    recentWorkComments: async (_, args, { repo }) => repo.listRecentWorkComments(args),
     work: async (_, args, { repo, currentUser }) => {
       const work = args.id
         ? await repo.getWorkById(args.id)

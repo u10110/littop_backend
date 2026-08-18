@@ -1918,6 +1918,51 @@ export function createPostgresRepository(pool) {
       return rows.map(workFromRow);
     },
 
+    async listRecentWorkComments({ limit = 12 } = {}) {
+      const page = buildLimitOffset(limit, 0);
+      const { rows } = await pool.query(
+        `
+        select wc.id, wc.body, wc.created_at, w.id as work_id, w.title as work_title, w.slug as work_slug,
+               u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at,
+               u.last_seen_at as author_last_seen_at, u.created_at as author_created_at, u.updated_at as author_updated_at,
+               ap.display_name as author_display_name, ap.bio as author_bio, ap.avatar_url as author_avatar_url,
+               ap.cover_image_url as author_cover_image_url, ap.cover_image_position_x as author_cover_image_position_x,
+               ap.cover_image_position_y as author_cover_image_position_y, ap.cover_image_scale as author_cover_image_scale,
+               ap.city as author_city, ap.website_url as author_website_url, ap.birth_date as author_birth_date,
+               ap.rating_total as author_rating_total, ap.works_count_cached as author_works_count_cached,
+               ap.is_classic as author_is_classic, ap.is_memorial_page as author_is_memorial_page,
+               ap.is_featured as author_is_featured, ap.is_child as author_is_child
+        from work_comments wc
+        join works w on w.id = wc.work_id and w.status = 'published'
+        join users u on u.id = wc.user_id
+        left join author_profiles ap on ap.user_id = u.id
+        where wc.status = 'visible'
+          and u.status <> 'deleted'
+        order by wc.created_at desc, wc.id desc
+        limit $1
+        `,
+        [page.limit],
+      );
+      return rows.map((row) => ({
+        id: row.id,
+        body: row.body,
+        createdAt: toIsoDate(row.created_at),
+        work: { id: row.work_id, title: row.work_title, slug: row.work_slug },
+        author: authorFromRow({
+          id: row.author_id, email: row.author_email, login: row.author_login,
+          registered_at: row.author_registered_at, last_seen_at: row.author_last_seen_at,
+          created_at: row.author_created_at, updated_at: row.author_updated_at,
+          display_name: row.author_display_name, bio: row.author_bio, avatar_url: row.author_avatar_url,
+          cover_image_url: row.author_cover_image_url, cover_image_position_x: row.author_cover_image_position_x,
+          cover_image_position_y: row.author_cover_image_position_y, cover_image_scale: row.author_cover_image_scale,
+          city: row.author_city, website_url: row.author_website_url, birth_date: row.author_birth_date,
+          rating_total: row.author_rating_total, works_count_cached: row.author_works_count_cached,
+          is_classic: row.author_is_classic, is_memorial_page: row.author_is_memorial_page,
+          is_featured: row.author_is_featured, is_child: row.author_is_child,
+        }),
+      }));
+    },
+
     async deactivateWorkAnnouncement({ workId }) {
       const client = await pool.connect();
       try {

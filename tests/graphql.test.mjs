@@ -82,6 +82,15 @@ function makeFakeRepo() {
     async listWorks() {
       return works;
     },
+    async listRecentWorkComments() {
+      return [{
+        id: 1,
+        body: 'Свежий отзыв',
+        createdAt: '2026-08-18T12:00:00.000Z',
+        work: { id: 100, title: 'Тестовая работа', slug: 'test-work' },
+        author: { id: 1, login: 'reader', displayName: 'Читатель' },
+      }];
+    },
     async createWork({ authorUserId, sectionCode, title, summary, body, excerpt, status, projectFormat }) {
       const work = {
         id: workId++,
@@ -162,7 +171,8 @@ test('register mutation returns token and user', async () => {
         email: 'neo@example.com',
         login: 'neo',
         password: 's3cret-pass',
-        displayName: 'Neo'
+        displayName: 'Neo',
+        acceptTerms: true
       }
     }
   }, {
@@ -332,6 +342,32 @@ test('createWork requires auth and returns created work for authenticated author
   assert.equal(allowed.body.singleResult.data.createWork.title, 'Новый текст');
   assert.equal(allowed.body.singleResult.data.createWork.sectionCode, 'poetry');
   assert.equal(allowed.body.singleResult.data.createWork.author.login, 'writer');
+
+  await server.stop();
+});
+
+
+test('recentWorkComments exposes newest public comments with work and author', async () => {
+  const repo = makeFakeRepo();
+  const server = createApolloServer({ repo, jwtSecret: 'test-secret' });
+  await server.start();
+
+  const result = await server.executeOperation({
+    query: `query {
+      recentWorkComments(limit: 5) {
+        id
+        body
+        work { id title slug }
+        author { login displayName }
+      }
+    }`,
+  }, { contextValue: { repo, jwtSecret: 'test-secret', currentUser: null, authHeader: '' } });
+
+  assert.equal(result.body.kind, 'single');
+  assert.equal(result.body.singleResult.errors, undefined);
+  assert.equal(result.body.singleResult.data.recentWorkComments[0].body, 'Свежий отзыв');
+  assert.equal(result.body.singleResult.data.recentWorkComments[0].work.slug, 'test-work');
+  assert.equal(result.body.singleResult.data.recentWorkComments[0].author.login, 'reader');
 
   await server.stop();
 });
