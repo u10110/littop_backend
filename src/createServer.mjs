@@ -257,6 +257,7 @@ const typeDefs = `#graphql
     login: String!
     password: String!
     displayName: String!
+    acceptTerms: Boolean!
   }
 
   input LoginInput {
@@ -456,6 +457,11 @@ const resolvers = {
   },
   Mutation: {
     register: async (_, { input }, { repo, jwtSecret }) => {
+      if (input.acceptTerms !== true) {
+        throw new GraphQLError('User agreement must be accepted', {
+          extensions: { code: 'BAD_USER_INPUT' },
+        });
+      }
       const existing = await repo.findUserByEmailOrLogin(input.email, input.login);
       if (existing) {
         throw new GraphQLError('User with this email or login already exists', {
