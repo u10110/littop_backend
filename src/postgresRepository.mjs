@@ -432,7 +432,7 @@ export function createPostgresRepository(pool) {
           `
           insert into users (email, login, password_hash)
           values ($1, $2, $3)
-          returning id, author_user_id
+          returning id
           `,
           [email, login, passwordHash],
         );
@@ -484,6 +484,34 @@ export function createPostgresRepository(pool) {
         [normalizedEmail],
       );
       return userFromRow(rows[0]);
+    },
+
+    async createPasswordResetToken({ userId, tokenHash, expiresAt }) {
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        await client.query('delete from password_reset_tokens where user_id = $1 and used_at is null', [userId]);
+        await client.query('insert into password_reset_tokens (user_id, token_hash, expires_at) values ($1, $2, $3)', [userId, tokenHash, expiresAt]);
+        await client.query('commit');
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async consumePasswordResetToken({ tokenHash }) {
+      const { rows } = await pool.query(
+        'update password_reset_tokens set used_at = now() where token_hash = $1 and used_at is null and expires_at > now() returning user_id',
+        [tokenHash],
+      );
+      return rows[0] ? { userId: rows[0].user_id } : null;
+    },
+
+    async updateUserPassword({ userId, passwordHash }) {
+      await pool.query('update users set password_hash = $2, updated_at = now() where id = $1', [userId, passwordHash]);
+      return this.getUserById(userId);
     },
 
     async getUserBySocialAccount({ provider, providerUserId }) {

@@ -4,6 +4,7 @@ import { createApolloServer } from './createServer.mjs';
 import { createPool } from './db.mjs';
 import { createHttpServer } from './httpServer.mjs';
 import { createPostgresRepository } from './postgresRepository.mjs';
+import { createMailer } from './mailer.mjs';
 
 const PORT = Number(process.env.PORT || 4000);
 const DATABASE_URL = process.env.DATABASE_URL || '';
@@ -22,7 +23,9 @@ if (!DATABASE_URL) {
 
 const pool = createPool(DATABASE_URL);
 const repo = createPostgresRepository(pool);
-const apolloServer = createApolloServer({ repo, jwtSecret: JWT_SECRET, adminUserIds: ADMIN_USER_IDS });
+const mailer = createMailer(process.env);
+const frontendBaseUrl = process.env.FRONTEND_BASE_URL || 'https://pre-prod.littop.ru';
+const apolloServer = createApolloServer({ repo, jwtSecret: JWT_SECRET, adminUserIds: ADMIN_USER_IDS, mailer, frontendBaseUrl });
 await apolloServer.start();
 
 const httpServer = createHttpServer({

@@ -162,7 +162,8 @@ test('register mutation returns token and user', async () => {
         email: 'neo@example.com',
         login: 'neo',
         password: 's3cret-pass',
-        displayName: 'Neo'
+        displayName: 'Neo',
+        acceptTerms: true
       }
     }
   }, {

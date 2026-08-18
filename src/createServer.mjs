@@ -2,6 +2,12 @@ import { ApolloServer } from '@apollo/server';
 import { GraphQLError } from 'graphql';
 
 import { decodeToken, getCurrentUserFromHeader, hashPassword, issueToken, verifyPassword } from './auth.mjs';
+import {
+  buildPasswordResetUrl,
+  createPasswordResetToken,
+  hashPasswordResetToken,
+  PASSWORD_RESET_TOKEN_TTL_MS,
+} from './passwordReset.mjs';
 
 const typeDefs = `#graphql
   type Health {
@@ -483,6 +489,46 @@ const resolvers = {
       const token = issueToken(user, jwtSecret);
       return { token, user };
     },
+    requestPasswordReset: async (_, { email }, { repo, mailer, frontendBaseUrl }) => {
+      const normalizedEmail = String(email ?? '').trim().toLowerCase();
+      const user = normalizedEmail && typeof repo.findUserByEmail === 'function'
+        ? await repo.findUserByEmail(normalizedEmail)
+        : null;
+      // Return success even for an unknown email to avoid account enumeration.
+      if (!user || !mailer || typeof mailer.sendPasswordReset !== 'function') return true;
+      const token = createPasswordResetToken();
+      await repo.createPasswordResetToken({
+        userId: user.id,
+        tokenHash: hashPasswordResetToken(token),
+        expiresAt: new Date(Date.now() + PASSWORD_RESET_TOKEN_TTL_MS),
+      });
+      await mailer.sendPasswordReset({
+        email: user.email,
+        resetUrl: buildPasswordResetUrl(frontendBaseUrl, token),
+      });
+      return true;
+    },
+    resetPassword: async (_, { token, password }, { repo, jwtSecret }) => {
+      const normalizedToken = String(token ?? '').trim();
+      const normalizedPassword = String(password ?? '');
+      if (!normalizedToken || normalizedPassword.length < 8) {
+        throw new GraphQLError('Invalid or expired password reset link', {
+          extensions: { code: 'BAD_USER_INPUT' },
+        });
+      }
+      const consumed = await repo.consumePasswordResetToken({ tokenHash: hashPasswordResetToken(normalizedToken) });
+      if (!consumed?.userId) {
+        throw new GraphQLError('Invalid or expired password reset link', {
+          extensions: { code: 'BAD_USER_INPUT' },
+        });
+      }
+      const passwordHash = await hashPassword(normalizedPassword);
+      const user = await repo.updateUserPassword({ userId: consumed.userId, passwordHash });
+      if (!user) {
+        throw new GraphQLError('Account not found', { extensions: { code: 'BAD_USER_INPUT' } });
+      }
+      return { token: issueToken(user, jwtSecret), user };
+    },
     touchPresence: async (_, __, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
       return applyAdminAccess(await repo.touchUserPresence(user.id), adminUserIds);
@@ -604,10 +650,16 @@ const resolvers = {
   },
 };
 
-export function createApolloServer({ repo, jwtSecret, adminUserIds = new Set() }) {
+export function createApolloServer({ repo, jwtSecret, adminUserIds = new Set(), mailer = null, frontendBaseUrl = 'http://localhost:5173' }) {
   return new ApolloServer({
     typeDefs,
-    resolvers,
+    resolvers: {
+      ...resolvers,
+      Mutation: {
+        ...resolvers.Mutation,
+        requestPasswordReset: (parent, args, context) => resolvers.Mutation.requestPasswordReset(parent, args, { ...context, mailer, frontendBaseUrl }),
+      },
+    },
     introspection: true,
   });
 }
