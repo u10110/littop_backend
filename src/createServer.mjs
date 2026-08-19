@@ -116,6 +116,12 @@ const typeDefs = `#graphql
     author: Author!
   }
 
+  type WorkGenre {
+    slug: String!
+    name: String!
+    sectionCode: String!
+  }
+
   type WorkRating {
     id: ID
     workId: ID!
@@ -435,6 +441,7 @@ const typeDefs = `#graphql
     birthdayAuthors(limit: Int = 12): [Author!]!
     author(id: ID, login: String): Author
     works(limit: Int = 20, offset: Int = 0, sectionCode: String, genreSlug: String, authorId: ID, search: String, status: String = "published", createdToday: Boolean): [Work!]!
+    workGenres(sectionCode: String): [WorkGenre!]!
     announcedWorks(limit: Int = 12): [Work!]!
     announcements(limit: Int = 12): [Work!]!
     recentWorkComments(limit: Int = 12): [HomeComment!]!
@@ -641,6 +648,7 @@ const resolvers = {
     birthdayAuthors: async (_, args, { repo }) => repo.listBirthdayAuthors(args),
     author: async (_, args, { repo }) => repo.getAuthor(args),
     works: async (_, args, { repo }) => repo.listWorks(args),
+    workGenres: async (_, args, { repo }) => repo.listWorkGenres(args),
     announcedWorks: async (_, args, { repo }) => repo.listAnnouncedWorks(args),
     announcements: async (_, args, { repo }) => repo.listAnnouncedWorks(args),
     recentWorkComments: async (_, args, { repo }) => repo.listRecentWorkComments(args),

@@ -1889,6 +1889,28 @@ export function createPostgresRepository(pool) {
       return { totalViews, lockedViews, batchSize, visitors: rows.map(pageVisitorFromRow) };
     },
 
+    async listWorkGenres({ sectionCode = null } = {}) {
+      const params = [];
+      const conditions = ["w.status = 'published'"];
+      if (sectionCode) {
+        params.push(sectionCode);
+        conditions.push(`ws.code = $${params.length}`);
+      }
+      const { rows } = await pool.query(
+        `
+        select wg.slug, wg.name, ws.code as section_code
+        from work_genres wg
+        join work_sections ws on ws.id = wg.section_id
+        join works w on w.genre_id = wg.id
+        where ${conditions.join(' and ')}
+        group by wg.id, wg.slug, wg.name, ws.code, ws.sort_order, wg.sort_order
+        order by ws.sort_order asc, wg.sort_order asc, wg.name asc
+        `,
+        params,
+      );
+      return rows.map((row) => ({ slug: row.slug, name: row.name, sectionCode: row.section_code }));
+    },
+
     async listAnnouncedWorks({ limit = 12 } = {}) {
       const page = buildLimitOffset(limit, 0);
       const { rows } = await pool.query(
