@@ -1151,6 +1151,7 @@ const resolvers = {
     coverImagePositionY: async (parent, _, { repo }) => parent?.coverImagePositionY ?? (await repo.getAuthor({ id: parent.id }))?.coverImagePositionY ?? 50,
     coverImageScale: async (parent, _, { repo }) => parent?.coverImageScale ?? (await repo.getAuthor({ id: parent.id }))?.coverImageScale ?? 1,
     profileLinks: async (parent, _, { repo }) => Array.isArray(parent?.profileLinks) ? parent.profileLinks : repo.getAuthorProfileLinks(parent.id),
+    canReceivePrivateMessages: async (parent, _, { repo }) => repo.canReceivePrivateMessages(parent.id),
   },
   AuthorProfile: {
     isMemorialPage: (parent) => Boolean(parent?.isMemorialPage),
@@ -1197,13 +1198,6 @@ const resolvers = {
   PrivateMessage: {
     sender: async (parent, _, { repo }) => parent.sender ?? repo.getAuthorByUserId(parent.senderUserId),
     recipient: async (parent, _, { repo }) => parent.recipient ?? repo.getAuthorByUserId(parent.recipientUserId),
-  },
-  Author: {
-    isOnline: (parent) => resolveOnlineFlag(parent),
-    profileLinks: async (parent, _, { repo }) => Array.isArray(parent?.profileLinks)
-      ? parent.profileLinks
-      : repo.getAuthorProfileLinks(parent.id),
-    canReceivePrivateMessages: async (parent, _, { repo }) => repo.canReceivePrivateMessages(parent.id),
   },
 };
 
