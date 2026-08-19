@@ -1200,6 +1200,9 @@ const resolvers = {
   },
   Author: {
     isOnline: (parent) => resolveOnlineFlag(parent),
+    profileLinks: async (parent, _, { repo }) => Array.isArray(parent?.profileLinks)
+      ? parent.profileLinks
+      : repo.getAuthorProfileLinks(parent.id),
     canReceivePrivateMessages: async (parent, _, { repo }) => repo.canReceivePrivateMessages(parent.id),
   },
 };
