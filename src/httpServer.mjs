@@ -76,6 +76,7 @@ const WORK_MEDIA_EXTENSION_BY_KIND = {
 };
 const WORK_MEDIA_CONTENT_TYPE_BY_EXTENSION = {
   '.pdf': 'application/pdf',
+  ...IMAGE_CONTENT_TYPE_BY_EXTENSION,
 };
 
 function setCorsHeaders(req, res) {
@@ -302,15 +303,19 @@ function decodeBase64Image(rawValue) {
 
 function normalizeWorkMediaKind(value) {
   const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'pdf' || normalized === 'audio') {
+  if (normalized === 'pdf' || normalized === 'audio' || normalized === 'image') {
     return normalized;
   }
-  throw new Error('kind must be pdf or audio');
+  throw new Error('kind must be pdf, audio or image');
 }
 
 function detectWorkMediaExtension({ kind, mimeType, fileName }) {
   if (kind === 'audio') {
     return detectAudioExtension({ mimeType, fileName });
+  }
+
+  if (kind === 'image') {
+    return detectImageExtension({ mimeType, fileName });
   }
 
   const normalizedMimeType = String(mimeType || '').trim().toLowerCase();
@@ -332,19 +337,20 @@ function decodeBase64WorkMedia(rawValue, kind) {
     .replace(/\s+/g, '');
 
   if (!normalized) {
-    throw new Error(kind === 'audio' ? 'Аудиофайл не передан.' : 'PDF-файл не передан.');
+    throw new Error(kind === 'audio' ? 'Аудиофайл не передан.' : kind === 'image' ? 'Изображение не передано.' : 'PDF-файл не передан.');
   }
 
   if (!/^[A-Za-z0-9+/]+=*$/.test(normalized) || normalized.length % 4 !== 0) {
-    throw new Error(kind === 'audio' ? 'Некорректный формат аудиофайла.' : 'Некорректный формат PDF-файла.');
+    throw new Error(kind === 'audio' ? 'Некорректный формат аудиофайла.' : kind === 'image' ? 'Некорректный формат изображения.' : 'Некорректный формат PDF-файла.');
   }
 
   const buffer = Buffer.from(normalized, 'base64');
   if (!buffer.length) {
-    throw new Error(kind === 'audio' ? 'Аудиофайл пустой.' : 'PDF-файл пустой.');
+    throw new Error(kind === 'audio' ? 'Аудиофайл пустой.' : kind === 'image' ? 'Изображение пустое.' : 'PDF-файл пустой.');
   }
-  if (buffer.length > WORK_MEDIA_FILE_SIZE_LIMIT_BYTES) {
-    throw new Error('Файл слишком большой. Максимум 25 МБ.');
+  const sizeLimit = kind === 'image' ? IMAGE_FILE_SIZE_LIMIT_BYTES : WORK_MEDIA_FILE_SIZE_LIMIT_BYTES;
+  if (buffer.length > sizeLimit) {
+    throw new Error(kind === 'image' ? 'Изображение слишком большое. Максимум 10 МБ.' : 'Файл слишком большой. Максимум 25 МБ.');
   }
   return buffer;
 }
@@ -791,7 +797,7 @@ async function handleWorkMediaUploadRequest({ req, res, pathname, repo, jwtSecre
       fileName: body?.fileName,
     });
  
-    const kindPrefix = kind === 'audio' ? 'work-audio' : 'work-pdf';
+    const kindPrefix = kind === 'audio' ? 'work-audio' : kind === 'image' ? 'work-image' : 'work-pdf';
     const storedFileName = `${kindPrefix}-${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
     const publicPrefix = kind === 'audio' ? AUDIO_PUBLIC_PATH_PREFIX : WORK_MEDIA_PUBLIC_PATH_PREFIX;
     const storageDir = kind === 'audio' ? resolveAudioStorageDir(env) : resolveWorkMediaStorageDir(env);
