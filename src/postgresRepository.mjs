@@ -1891,19 +1891,18 @@ export function createPostgresRepository(pool) {
 
     async listWorkGenres({ sectionCode = null } = {}) {
       const params = [];
-      const conditions = ["w.status = 'published'"];
+      const conditions = [];
       if (sectionCode) {
         params.push(sectionCode);
         conditions.push(`ws.code = $${params.length}`);
       }
+      const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
       const { rows } = await pool.query(
         `
         select wg.slug, wg.name, ws.code as section_code
         from work_genres wg
         join work_sections ws on ws.id = wg.section_id
-        join works w on w.genre_id = wg.id
-        where ${conditions.join(' and ')}
-        group by wg.id, wg.slug, wg.name, ws.code, ws.sort_order, wg.sort_order
+        ${where}
         order by ws.sort_order asc, wg.sort_order asc, wg.name asc
         `,
         params,
@@ -3535,6 +3534,9 @@ export function createPostgresRepository(pool) {
       if (String(resolvedRecipientUserId) == String(senderUserId)) throw new Error('Нельзя отправить личное сообщение самой себе.');
       const recipientUser = await this.getUserById(resolvedRecipientUserId);
       if (!recipientUser || recipientUser.status === 'deleted') throw new Error('Получатель недоступен.');
+      if (recipientUser.profile?.isClassic || recipientUser.profile?.isMemorialPage) {
+        throw new Error('Личные сообщения недоступны для этой авторской страницы.');
+      }
       const { rows } = await pool.query(
         `
         insert into private_messages (sender_user_id, recipient_user_id, body)
