@@ -3534,7 +3534,7 @@ export function createPostgresRepository(pool) {
       if (String(resolvedRecipientUserId) == String(senderUserId)) throw new Error('Нельзя отправить личное сообщение самой себе.');
       const recipientUser = await this.getUserById(resolvedRecipientUserId);
       if (!recipientUser || recipientUser.status === 'deleted') throw new Error('Получатель недоступен.');
-      if (recipientUser.profile?.isClassic || recipientUser.profile?.isMemorialPage) {
+      if (!await this.canReceivePrivateMessages(resolvedRecipientUserId)) {
         throw new Error('Личные сообщения недоступны для этой авторской страницы.');
       }
       const { rows } = await pool.query(
@@ -3547,6 +3547,29 @@ export function createPostgresRepository(pool) {
       );
       const messages = await this.listPrivateMessages({ userId: senderUserId, withUserId: resolvedRecipientUserId, limit: 1 });
       return messages[messages.length - 1] ?? null;
+    },
+
+    async canReceivePrivateMessages(userId) {
+      if (!userId) return false;
+      const { rows } = await pool.query(
+        `
+        select u.status,
+               coalesce(ap.is_classic, false) as is_classic,
+               coalesce(ap.is_memorial_page, false) as is_memorial_page,
+               coalesce(ap.can_receive_private_messages, true) as can_receive_private_messages
+        from users u
+        left join author_profiles ap on ap.user_id = u.id
+        where u.id = $1
+        limit 1
+        `,
+        [userId],
+      );
+      const recipient = rows[0];
+      return Boolean(recipient)
+        && recipient.status !== 'deleted'
+        && !recipient.is_classic
+        && !recipient.is_memorial_page
+        && recipient.can_receive_private_messages;
     },
 
     async markPrivateMessagesRead({ userId, withUserId = null, withLogin = null }) {

@@ -76,6 +76,7 @@ const typeDefs = `#graphql
     worksCountCached: Int!
     isClassic: Boolean!
     isMemorialPage: Boolean!
+    canReceivePrivateMessages: Boolean
     isFeatured: Boolean!
     isChild: Boolean
     registeredAt: String!
@@ -1196,6 +1197,10 @@ const resolvers = {
   PrivateMessage: {
     sender: async (parent, _, { repo }) => parent.sender ?? repo.getAuthorByUserId(parent.senderUserId),
     recipient: async (parent, _, { repo }) => parent.recipient ?? repo.getAuthorByUserId(parent.recipientUserId),
+  },
+  Author: {
+    isOnline: (parent) => resolveOnlineFlag(parent),
+    canReceivePrivateMessages: async (parent, _, { repo }) => repo.canReceivePrivateMessages(parent.id),
   },
 };
 
