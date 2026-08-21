@@ -1,7 +1,9 @@
 import { appendFile, mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
-const DEFAULT_ERROR_LOG_PATH = '/home/agent/littop_backend/logs/errors.jsonl';
+function defaultErrorLogPath() {
+  return join(process.cwd(), 'logs', 'errors.jsonl');
+}
 
 function safeString(value, limit = 4000) {
   return String(value ?? '').replace(/[\r\n]+/g, ' ').slice(0, limit);
@@ -33,7 +35,7 @@ export async function reportBackendError({ env = process.env, error, kind = 'htt
     if (entry[key] === undefined || entry[key] === '') delete entry[key];
   }
 
-  const logPath = String(env.ERROR_LOG_PATH || DEFAULT_ERROR_LOG_PATH);
+  const logPath = String(env.ERROR_LOG_PATH || defaultErrorLogPath());
   try {
     await mkdir(dirname(logPath), { recursive: true });
     await appendFile(logPath, `${JSON.stringify(entry)}\n`, { mode: 0o600 });

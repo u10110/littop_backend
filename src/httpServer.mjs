@@ -396,12 +396,12 @@ async function handleGraphqlRequest({ req, res, apolloServer, repo, jwtSecret, a
   } catch {}
 
   copyGraphqlResponse(res, response);
-  if (response.status >= 500 || (response.body.kind === 'complete' && response.body.string.includes('"errors"'))) {
+  if (response.status >= 500) {
     await reportBackendError({
       error: response.body.kind === 'complete' ? response.body.string : `GraphQL HTTP ${response.status}`,
       kind: 'graphql',
       req,
-      statusCode: response.status || 200,
+      statusCode: response.status || 500,
       env: process.env,
     });
   }
