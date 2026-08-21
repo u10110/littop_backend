@@ -4,6 +4,7 @@ import { createApolloServer } from './createServer.mjs';
 import { createPool } from './db.mjs';
 import { createHttpServer } from './httpServer.mjs';
 import { createPostgresRepository } from './postgresRepository.mjs';
+import { reportBackendError } from './errorReporter.mjs';
 
 const PORT = Number(process.env.PORT || 4000);
 const DATABASE_URL = process.env.DATABASE_URL || '';
@@ -19,6 +20,15 @@ if (!DATABASE_URL) {
   console.error('DATABASE_URL is required');
   process.exit(1);
 }
+
+process.on('uncaughtException', async (error) => {
+  await reportBackendError({ error, kind: 'uncaughtException', env: process.env });
+  process.exit(1);
+});
+
+process.on('unhandledRejection', async (reason) => {
+  await reportBackendError({ error: reason, kind: 'unhandledRejection', env: process.env });
+});
 
 const pool = createPool(DATABASE_URL);
 const repo = createPostgresRepository(pool);
