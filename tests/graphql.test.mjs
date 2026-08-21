@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import { createApolloServer } from '../src/createServer.mjs';
 import { issueToken } from '../src/auth.mjs';
@@ -82,6 +83,13 @@ function makeFakeRepo() {
     async listWorks() {
       return works;
     },
+    async listWorkGenres({ sectionCode = null } = {}) {
+      const genres = [
+        { slug: 'love-lyrics', name: 'Лирика любовная', sectionCode: 'poetry' },
+        { slug: 'novel', name: 'Романы', sectionCode: 'prose' },
+      ];
+      return sectionCode ? genres.filter((genre) => genre.sectionCode === sectionCode) : genres;
+    },
     async createWork({ authorUserId, sectionCode, title, summary, body, excerpt, status, projectFormat }) {
       const work = {
         id: workId++,
@@ -131,6 +139,12 @@ function makeFakeRepo() {
   };
 }
 
+test('profile update without profileLinks preserves existing resource buttons', async () => {
+  const source = await readFile(new URL('../src/postgresRepository.mjs', import.meta.url), 'utf8');
+  assert.match(source, /async updateUserProfile\([^)]*profileLinks = undefined/);
+  assert.match(source, /if \(profileLinks !== undefined\) \{\s*await replaceAuthorProfileLinks\(userId, profileLinks, client\);\s*\}/);
+});
+
 test('health query works', async () => {
   const repo = makeFakeRepo();
   const server = createApolloServer({ repo, jwtSecret: 'test-secret' });
@@ -144,6 +158,33 @@ test('health query works', async () => {
   assert.equal(result.body.singleResult.data.health.ok, true);
   assert.equal(result.body.singleResult.data.health.database, true);
   await server.stop();
+});
+
+test('work genres query returns only rubrics for the selected section', async () => {
+  const repo = makeFakeRepo();
+  const server = createApolloServer({ repo, jwtSecret: 'test-secret' });
+  await server.start();
+  const result = await server.executeOperation({
+    query: 'query($sectionCode: String) { workGenres(sectionCode: $sectionCode) { slug sectionCode } }',
+    variables: { sectionCode: 'prose' },
+  }, {
+    contextValue: { repo, jwtSecret: 'test-secret', currentUser: null, authHeader: '' },
+  });
+  assert.equal(result.body.kind, 'single');
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(result.body.singleResult.data.workGenres)),
+    [{ slug: 'novel', sectionCode: 'prose' }],
+  );
+  await server.stop();
+});
+
+test('postgres work genres lookup filters by section and includes rubrics without published works', async () => {
+  const source = await readFile(new URL('../src/postgresRepository.mjs', import.meta.url), 'utf8');
+  const method = source.match(/async listWorkGenres\([\s\S]*?\n    \},\n\n    async listAnnouncedWorks/);
+  assert.ok(method);
+  assert.match(method[0], /join work_sections ws on ws\.id = wg\.section_id/);
+  assert.match(method[0], /ws\.code = \$\$\{params\.length\}/);
+  assert.doesNotMatch(method[0], /join works w on w\.genre_id = wg\.id/);
 });
 
 test('register mutation returns token and user', async () => {
