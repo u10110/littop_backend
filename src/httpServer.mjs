@@ -13,6 +13,7 @@ import * as fs from "fs";
 import { s3 } from "./S3.js"; // Импор
 
 import { buildContext } from './createServer.mjs';
+import { reportBackendError } from './errorReporter.mjs';
 import {
   buildSocialAuthFailureRedirect,
   buildSocialAuthStartRedirect,
@@ -395,6 +396,15 @@ async function handleGraphqlRequest({ req, res, apolloServer, repo, jwtSecret, a
   } catch {}
 
   copyGraphqlResponse(res, response);
+  if (response.status >= 500 || (response.body.kind === 'complete' && response.body.string.includes('"errors"'))) {
+    await reportBackendError({
+      error: response.body.kind === 'complete' ? response.body.string : `GraphQL HTTP ${response.status}`,
+      kind: 'graphql',
+      req,
+      statusCode: response.status || 200,
+      env: process.env,
+    });
+  }
   if (response.body.kind === 'complete') {
     res.end(response.body.string);
     return;
@@ -987,6 +997,9 @@ export function createHttpServer({ apolloServer, repo, jwtSecret, adminUserIds =
       sendJson(res, 404, { error: 'Not found' });
     } catch (error) {
       const statusCode = error instanceof SocialAuthError ? error.statusCode : 500;
+      if (statusCode >= 500) {
+        await reportBackendError({ error, kind: 'http', req, statusCode, env });
+      }
       sendJson(res, statusCode, {
         error: error instanceof Error ? error.message : 'Internal server error',
       });
