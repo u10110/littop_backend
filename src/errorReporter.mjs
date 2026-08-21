@@ -38,7 +38,7 @@ export async function reportBackendError({ env = process.env, error, kind = 'htt
   const logPath = String(env.ERROR_LOG_PATH || defaultErrorLogPath());
   try {
     await mkdir(dirname(logPath), { recursive: true });
-    await appendFile(logPath, `${JSON.stringify(entry)}\n`, { mode: 0o600 });
+    await appendFile(logPath, `${JSON.stringify(entry)}\n`, { mode: 0o644 });
   } catch (loggingError) {
     // Error reporting must never take the backend down.
     console.error('Could not write backend error report:', loggingError?.message || loggingError);
