@@ -371,3 +371,72 @@ test('recentWorkComments exposes newest public comments with work and author', a
 
   await server.stop();
 });
+
+
+
+
+test('admin can save a work genre from rubricator', async () => {
+  const repo = makeFakeRepo();
+  let updateArgs = null;
+  repo.updateWorkGenre = async (args) => { updateArgs = args; return { id: 49, slug: 'lyrics', name: args.name, sectionCode: 'poetry', sortOrder: args.sortOrder }; };
+  const server = createApolloServer({ repo, jwtSecret: 'test-secret', adminUserIds: new Set(['99']) });
+  await server.start();
+
+  const result = await server.executeOperation(
+    { query: 'mutation { adminUpdateWorkGenre(genreId: 49, input: { name: "Лирика", sortOrder: 12 }) { id name sortOrder } }' },
+    { contextValue: { repo, jwtSecret: 'test-secret', authHeader: '', adminUserIds: new Set(['99']), currentUser: { id: 99, role: 'admin' } } },
+  );
+
+  assert.equal(result.body.singleResult.errors, undefined);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.body.singleResult.data?.adminUpdateWorkGenre)), { id: '49', name: 'Лирика', sortOrder: 12 });
+  assert.deepEqual(updateArgs, { genreId: '49', name: 'Лирика', sortOrder: 12 });
+  await server.stop();
+});
+
+test('workGenres includes stable identifiers and ordering for admin management', async () => {
+  const repo = makeFakeRepo();
+  repo.listWorkGenres = async () => [{ id: 17, slug: 'lyrics', name: 'Лирика', sectionCode: 'poetry', sortOrder: 4 }];
+  const server = createApolloServer({ repo, jwtSecret: 'test-secret' });
+  await server.start();
+
+  const result = await server.executeOperation(
+    { query: '{ workGenres { id slug name sectionCode sortOrder } }' },
+    { contextValue: { repo, jwtSecret: 'test-secret', currentUser: null, authHeader: '' } },
+  );
+
+  assert.equal(result.body.singleResult.errors, undefined);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.body.singleResult.data?.workGenres)), [{ id: '17', slug: 'lyrics', name: 'Лирика', sectionCode: 'poetry', sortOrder: 4 }]);
+  await server.stop();
+});
+
+test('work group collapse state is exposed and owner can persist it', async () => {
+  const repo = makeFakeRepo();
+  const server = createApolloServer({ repo, jwtSecret: 'test-secret' });
+  await server.start();
+  const currentUser = await repo.createUser({ email: 'collapsed@example.test', login: 'collapsed', passwordHash: 'hash', displayName: 'Автор' });
+  repo.listAuthorWorkGroups = async () => [{ id: 7, name: 'Цикл', description: null, position: 0, isCollapsed: false, works: [] }];
+  let mutationArgs = null;
+  repo.setAuthorWorkGroupCollapsed = async (args) => { mutationArgs = args; return { id: 7, name: 'Цикл', description: null, position: 0, isCollapsed: true, works: [] }; };
+  const result = await server.executeOperation(
+    { query: 'mutation { setMyWorkGroupCollapsed(groupId: 7, isCollapsed: true) { id isCollapsed } }' },
+    { contextValue: { repo, jwtSecret: 'test-secret', currentUser, authHeader: '' } },
+  );
+  assert.equal(result.body.singleResult.errors, undefined);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.body.singleResult.data?.setMyWorkGroupCollapsed)), { id: '7', isCollapsed: true });
+  assert.deepEqual(mutationArgs, { groupId: '7', authorUserId: currentUser.id, isCollapsed: true });
+  await server.stop();
+});
+
+test('author work groups API exposes owner-managed ordered collections', async () => {
+  const repo = makeFakeRepo();
+  const server = createApolloServer({ repo, jwtSecret: 'test-secret' });
+  await server.start();
+  const currentUser = await repo.createUser({ email: 'writer@example.test', login: 'writer', passwordHash: 'hash', displayName: 'Автор' });
+  repo.listAuthorWorkGroups = async () => [{ id: 1, name: 'Цикл', description: null, position: 0, isCollapsed: false, works: [] }];
+  const result = await server.executeOperation(
+    { query: 'query { myWorkGroups { id name position isCollapsed works { id title } } }' },
+    { contextValue: { repo, jwtSecret: 'test-secret', currentUser, authHeader: '' } },
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(result.body.singleResult.data?.myWorkGroups)), [{ id: '1', name: 'Цикл', position: 0, isCollapsed: false, works: [] }]);
+  await server.stop();
+});

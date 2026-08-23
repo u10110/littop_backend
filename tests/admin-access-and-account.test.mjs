@@ -150,6 +150,33 @@ test('env-admin can manage чужие work/forum записи', async () => {
   await server.stop();
 });
 
+
+test('stored admin role can inspect managed accounts without environment ID allowlist', async () => {
+  const repo = makeRepo();
+  repo.listManagedAuthorAccounts = async ({ ownerUserId, limit }) => [{
+    id: 123,
+    login: 'managed_author',
+    email: 'managed@example.test',
+    role: 'author',
+    status: 'active',
+    registeredAt: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    profile: { displayName: 'Управляемый автор' },
+  }];
+  const server = createApolloServer({ repo, jwtSecret: 'test-secret' });
+  await server.start();
+
+  const result = await server.executeOperation(
+    { query: 'query { myManagedAuthors { id login } }' },
+    { contextValue: { ...adminContext(repo), adminUserIds: new Set(['47', '50']) } },
+  );
+
+  assert.equal(result.body.singleResult.errors, undefined);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.body.singleResult.data?.myManagedAuthors)), [{ id: '123', login: 'managed_author' }]);
+  await server.stop();
+});
+
 test('closeMyAccount calls repository soft-close flow', async () => {
   const repo = makeRepo();
   const server = createApolloServer({ repo, jwtSecret: 'test-secret' });

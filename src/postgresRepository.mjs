@@ -1899,7 +1899,7 @@ export function createPostgresRepository(pool) {
       const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
       const { rows } = await pool.query(
         `
-        select wg.slug, wg.name, ws.code as section_code
+        select wg.id, wg.slug, wg.name, wg.sort_order, ws.code as section_code
         from work_genres wg
         join work_sections ws on ws.id = wg.section_id
         ${where}
@@ -1907,7 +1907,43 @@ export function createPostgresRepository(pool) {
         `,
         params,
       );
-      return rows.map((row) => ({ slug: row.slug, name: row.name, sectionCode: row.section_code }));
+      return rows.map((row) => ({ id: row.id, slug: row.slug, name: row.name, sectionCode: row.section_code, sortOrder: row.sort_order }));
+    },
+
+    async createWorkGenre({ sectionCode, name }) {
+      const normalizedName = String(name || '').trim();
+      if (!normalizedName) throw new Error('Genre name is required');
+      const section = await pool.query('select id, code from work_sections where code = $1', [sectionCode]);
+      if (!section.rows[0]) throw new Error('Work section not found');
+      const baseSlug = slugify(normalizedName);
+      let slug = baseSlug;
+      let suffix = 2;
+      while ((await pool.query('select 1 from work_genres where slug = $1', [slug])).rowCount) slug = `${baseSlug}-${suffix++}`;
+      const { rows } = await pool.query(`
+        insert into work_genres (section_id, slug, name, sort_order)
+        values ($1, $2, $3, coalesce((select max(sort_order) + 10 from work_genres where section_id = $1), 10))
+        returning id, slug, name, sort_order
+      `, [section.rows[0].id, slug, normalizedName]);
+      return { id: rows[0].id, slug: rows[0].slug, name: rows[0].name, sectionCode: section.rows[0].code, sortOrder: rows[0].sort_order };
+    },
+
+    async updateWorkGenre({ genreId, name, sortOrder }) {
+      const normalizedName = String(name || '').trim();
+      if (!normalizedName) throw new Error('Genre name is required');
+      const { rows } = await pool.query(`
+        update work_genres wg set name = $1, sort_order = $2
+        from work_sections ws
+        where wg.id = $3 and ws.id = wg.section_id
+        returning wg.id, wg.slug, wg.name, wg.sort_order, ws.code as section_code
+      `, [normalizedName, Number(sortOrder) || 0, genreId]);
+      if (!rows[0]) throw new Error('Work genre not found');
+      return { id: rows[0].id, slug: rows[0].slug, name: rows[0].name, sectionCode: rows[0].section_code, sortOrder: rows[0].sort_order };
+    },
+
+    async deleteWorkGenre({ genreId }) {
+      const result = await pool.query('delete from work_genres where id = $1', [genreId]);
+      if (!result.rowCount) throw new Error('Work genre not found');
+      return true;
     },
 
     async listAnnouncedWorks({ limit = 12 } = {}) {
@@ -2215,6 +2251,92 @@ export function createPostgresRepository(pool) {
       return rows.map(authorReviewFeedItemFromRow);
     },
 
+    async listAuthorWorkGroups({ authorUserId, publicOnly = false }) {
+      const { rows } = await pool.query(`
+        select g.id, g.name, g.description, g.position, g.is_collapsed, i.work_id
+        from author_work_groups g
+        left join author_work_group_items i on i.group_id = g.id
+        where g.author_user_id = $1
+        order by g.position, g.id, i.position, i.work_id
+      `, [authorUserId]);
+      const groups = new Map();
+      for (const row of rows) {
+        if (!groups.has(row.id)) groups.set(row.id, { id: row.id, name: row.name, description: row.description, position: row.position, isCollapsed: Boolean(row.is_collapsed), workIds: [] });
+        if (row.work_id) groups.get(row.id).workIds.push(row.work_id);
+      }
+      const works = await this.listWorks({ authorId: authorUserId, status: publicOnly ? 'published' : null, limit: 500, offset: 0 });
+      const worksById = new Map(works.map((work) => [String(work.id), work]));
+      return [...groups.values()].map((group) => ({ ...group, works: group.workIds.map((id) => worksById.get(String(id))).filter(Boolean) }));
+    },
+
+    async setAuthorWorkGroupCollapsed({ groupId, authorUserId, isCollapsed }) {
+      const { rows } = await pool.query(`
+        update author_work_groups set is_collapsed = $1, updated_at = now()
+        where id = $2 and author_user_id = $3 returning id
+      `, [Boolean(isCollapsed), groupId, authorUserId]);
+      if (!rows[0]) throw new Error('Work group not found');
+      return (await this.listAuthorWorkGroups({ authorUserId })).find((group) => String(group.id) === String(groupId));
+    },
+
+    async createAuthorWorkGroup({ authorUserId, name, description = null }) {
+      const normalizedName = String(name || '').trim();
+      if (!normalizedName) throw new Error('Group name is required');
+      const { rows } = await pool.query(`
+        insert into author_work_groups (author_user_id, name, description, position)
+        values ($1, $2, $3, (select count(*) from author_work_groups where author_user_id = $1))
+        returning id
+      `, [authorUserId, normalizedName, normalizeOptionalText(description)]);
+      return (await this.listAuthorWorkGroups({ authorUserId })).find((group) => String(group.id) === String(rows[0].id));
+    },
+
+    async updateAuthorWorkGroup({ groupId, authorUserId, name, description = null }) {
+      const normalizedName = String(name || '').trim();
+      if (!normalizedName) throw new Error('Group name is required');
+      const { rows } = await pool.query(`
+        update author_work_groups set name = $1, description = $2, updated_at = now()
+        where id = $3 and author_user_id = $4 returning id
+      `, [normalizedName, normalizeOptionalText(description), groupId, authorUserId]);
+      if (!rows[0]) throw new Error('Work group not found');
+      return (await this.listAuthorWorkGroups({ authorUserId })).find((group) => String(group.id) === String(groupId));
+    },
+
+    async deleteAuthorWorkGroup({ groupId, authorUserId }) {
+      const result = await pool.query('delete from author_work_groups where id = $1 and author_user_id = $2', [groupId, authorUserId]);
+      if (!result.rowCount) throw new Error('Work group not found');
+      return true;
+    },
+
+    async reorderAuthorWorkGroups({ authorUserId, groupIds }) {
+      const ids = [...new Set(groupIds.map(String))];
+      const existing = await pool.query('select id from author_work_groups where author_user_id = $1', [authorUserId]);
+      if (ids.length !== existing.rows.length || existing.rows.some((row) => !ids.includes(String(row.id)))) throw new Error('Group order must include all own groups exactly once');
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        for (let position = 0; position < ids.length; position += 1) await client.query('update author_work_groups set position = $1, updated_at = now() where id = $2 and author_user_id = $3', [position, ids[position], authorUserId]);
+        await client.query('commit');
+      } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
+      return this.listAuthorWorkGroups({ authorUserId });
+    },
+
+    async setAuthorWorkGroupItems({ groupId, authorUserId, workIds }) {
+      const ids = [...new Set(workIds.map(String))];
+      const group = await pool.query('select id from author_work_groups where id = $1 and author_user_id = $2', [groupId, authorUserId]);
+      if (!group.rows[0]) throw new Error('Work group not found');
+      if (ids.length) {
+        const own = await pool.query('select id from works where author_user_id = $1 and id = any($2::bigint[])', [authorUserId, ids]);
+        if (own.rows.length != ids.length) throw new Error('Only own works can be grouped');
+      }
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        await client.query('delete from author_work_group_items where group_id = $1', [groupId]);
+        for (let position = 0; position < ids.length; position += 1) await client.query('insert into author_work_group_items (group_id, work_id, position) values ($1, $2, $3)', [groupId, ids[position], position]);
+        await client.query('commit');
+      } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
+      return (await this.listAuthorWorkGroups({ authorUserId })).find((item) => String(item.id) === String(groupId));
+    },
+
     async listWorks({ limit = 20, offset = 0, sectionCode = null, genreSlug = null, authorId = null, search = null, status = 'published', createdToday = false } = {}) {
       const page = buildLimitOffset(limit, offset);
       const conditions = [];
@@ -2331,7 +2453,7 @@ export function createPostgresRepository(pool) {
         if (!section.rows[0]) throw new Error(`Unknown sectionCode: ${sectionCode}`);
         let genreId = null;
         if (genreSlug) {
-          const genre = await client.query('select id from work_genres where slug = $1 limit 1', [genreSlug]);
+          const genre = await client.query('select id from work_genres where slug = $1 and section_id = $2 limit 1', [genreSlug, section.rows[0].id]);
           if (!genre.rows[0]) throw new Error(`Unknown genreSlug: ${genreSlug}`);
           genreId = genre.rows[0].id;
         }
@@ -2410,7 +2532,7 @@ export function createPostgresRepository(pool) {
 
         let genreId = null;
         if (genreSlug) {
-          const genre = await client.query('select id from work_genres where slug = $1 limit 1', [genreSlug]);
+          const genre = await client.query('select id from work_genres where slug = $1 and section_id = $2 limit 1', [genreSlug, section.rows[0].id]);
           if (!genre.rows[0]) throw new Error(`Unknown genreSlug: ${genreSlug}`);
           genreId = genre.rows[0].id;
         }

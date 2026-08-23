@@ -77,6 +77,7 @@ const typeDefs = `#graphql
     isClassic: Boolean!
     isMemorialPage: Boolean!
     canReceivePrivateMessages: Boolean
+    canManageAsManagedAccount: Boolean!
     isFeatured: Boolean!
     isChild: Boolean
     registeredAt: String!
@@ -117,10 +118,36 @@ const typeDefs = `#graphql
     author: Author!
   }
 
+  type AuthorWorkGroup {
+    id: ID!
+    name: String!
+    description: String
+    position: Int!
+    isCollapsed: Boolean!
+    works: [Work!]!
+  }
+
+  input AuthorWorkGroupInput {
+    name: String!
+    description: String
+  }
+
   type WorkGenre {
+    id: ID!
     slug: String!
     name: String!
     sectionCode: String!
+    sortOrder: Int!
+  }
+
+  input WorkGenreInput {
+    sectionCode: String!
+    name: String!
+  }
+
+  input UpdateWorkGenreInput {
+    name: String!
+    sortOrder: Int!
   }
 
   type WorkRating {
@@ -461,6 +488,8 @@ const typeDefs = `#graphql
     privateDialogs(limit: Int = 50): [PrivateDialog!]!
     privateMessages(withUserId: ID, withLogin: String, limit: Int = 100): [PrivateMessage!]!
     myManagedAuthors(limit: Int = 100): [Author!]!
+    myWorkGroups: [AuthorWorkGroup!]!
+    authorWorkGroups(authorId: ID!): [AuthorWorkGroup!]!
     myRatingEvents(limit: Int = 50): [AuthorRatingEvent!]!
     myPeachTransactions(limit: Int = 50): [PeachTransaction!]!
     myGrantedPeaches(limit: Int = 100): [PeachTransaction!]!
@@ -487,8 +516,18 @@ const typeDefs = `#graphql
     adminDeleteUser(userId: ID!): Boolean!
     createWork(input: CreateWorkInput!): Work!
     adminCreateWork(authorId: ID!, input: CreateWorkInput!): Work!
+    adminCreateWorkGenre(input: WorkGenreInput!): WorkGenre!
+    adminUpdateWorkGenre(genreId: ID!, input: UpdateWorkGenreInput!): WorkGenre!
+    adminDeleteWorkGenre(genreId: ID!): Boolean!
     updateWork(workId: ID!, input: UpdateWorkInput!): Work!
     deleteWork(workId: ID!): Work!
+    createMyWorkGroup(input: AuthorWorkGroupInput!): AuthorWorkGroup!
+    updateMyWorkGroup(groupId: ID!, input: AuthorWorkGroupInput!): AuthorWorkGroup!
+    deleteMyWorkGroup(groupId: ID!): Boolean!
+    reorderMyWorkGroups(groupIds: [ID!]!): [AuthorWorkGroup!]!
+    setMyWorkGroupItems(groupId: ID!, workIds: [ID!]!): AuthorWorkGroup!
+    setMyWorkGroupCollapsed(groupId: ID!, isCollapsed: Boolean!): AuthorWorkGroup!
+    reorderMyWorkGroupItems(groupId: ID!, workIds: [ID!]!): AuthorWorkGroup!
     updateRadioTrack(input: RadioTrackUpdateInput!): RadioTrack!
     deleteRadioTrack(id: ID!): RadioTrack!
     updateSiteSetting(key: String!, value: String!): SiteSetting!
@@ -527,7 +566,7 @@ function requireAuth(currentUser) {
 }
 
 function isAdminUser(user, adminUserIds) {
-  return Boolean(user?.id) && adminUserIds?.has(String(user.id));
+  return Boolean(user?.id) && (user.role === 'admin' || adminUserIds?.has(String(user.id)));
 }
 
 // Editors and admins may manage editorial content (editor-column topics,
@@ -694,6 +733,8 @@ const resolvers = {
       }
       return repo.listManagedAuthorAccounts({ ownerUserId: null, limit: args.limit ?? 100 });
     },
+    myWorkGroups: async (_, __, { repo, currentUser }) => repo.listAuthorWorkGroups({ authorUserId: requireAuth(currentUser).id }),
+    authorWorkGroups: async (_, { authorId }, { repo }) => repo.listAuthorWorkGroups({ authorUserId: authorId, publicOnly: true }),
     myRatingEvents: async (_, args, { repo, currentUser }) => repo.listUserRatingEvents({ userId: requireAuth(currentUser).id, limit: args.limit ?? 50 }),
     myPeachTransactions: async (_, args, { repo, currentUser }) => repo.listUserPeachTransactions({ userId: requireAuth(currentUser).id, limit: args.limit ?? 50 }),
     myGrantedPeaches: async (_, args, { repo, currentUser, adminUserIds }) => {
@@ -970,6 +1011,18 @@ const resolvers = {
       }
       return repo.createWork({ ...input, authorUserId: authorId });
     },
+    adminCreateWorkGenre: async (_, { input }, { currentUser, repo, adminUserIds }) => {
+      if (!isAdminUser(requireAuth(currentUser), adminUserIds)) throw new GraphQLError('Only admin can create work genres', { extensions: { code: 'FORBIDDEN' } });
+      return repo.createWorkGenre(input);
+    },
+    adminUpdateWorkGenre: async (_, { genreId, input }, { currentUser, repo, adminUserIds }) => {
+      if (!isAdminUser(requireAuth(currentUser), adminUserIds)) throw new GraphQLError('Only admin can update work genres', { extensions: { code: 'FORBIDDEN' } });
+      return repo.updateWorkGenre({ genreId, ...input });
+    },
+    adminDeleteWorkGenre: async (_, { genreId }, { currentUser, repo, adminUserIds }) => {
+      if (!isAdminUser(requireAuth(currentUser), adminUserIds)) throw new GraphQLError('Only admin can delete work genres', { extensions: { code: 'FORBIDDEN' } });
+      return repo.deleteWorkGenre({ genreId });
+    },
     updateWork: async (_, { workId, input }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
       return repo.updateWork({ workId, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds), ...input });
@@ -978,6 +1031,13 @@ const resolvers = {
       const user = requireAuth(currentUser);
       return repo.softDeleteWork({ workId, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds) });
     },
+    createMyWorkGroup: async (_, { input }, { currentUser, repo }) => repo.createAuthorWorkGroup({ authorUserId: requireAuth(currentUser).id, ...input }),
+    updateMyWorkGroup: async (_, { groupId, input }, { currentUser, repo }) => repo.updateAuthorWorkGroup({ groupId, authorUserId: requireAuth(currentUser).id, ...input }),
+    deleteMyWorkGroup: async (_, { groupId }, { currentUser, repo }) => repo.deleteAuthorWorkGroup({ groupId, authorUserId: requireAuth(currentUser).id }),
+    reorderMyWorkGroups: async (_, { groupIds }, { currentUser, repo }) => repo.reorderAuthorWorkGroups({ authorUserId: requireAuth(currentUser).id, groupIds }),
+    setMyWorkGroupItems: async (_, { groupId, workIds }, { currentUser, repo }) => repo.setAuthorWorkGroupItems({ groupId, authorUserId: requireAuth(currentUser).id, workIds }),
+    setMyWorkGroupCollapsed: async (_, { groupId, isCollapsed }, { currentUser, repo }) => repo.setAuthorWorkGroupCollapsed({ groupId, authorUserId: requireAuth(currentUser).id, isCollapsed }),
+    reorderMyWorkGroupItems: async (_, { groupId, workIds }, { currentUser, repo }) => repo.setAuthorWorkGroupItems({ groupId, authorUserId: requireAuth(currentUser).id, workIds }),
     activateWorkAnnouncement: async (_, { workId }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
       const isAdmin = isAdminUser(user, adminUserIds);
@@ -1152,6 +1212,7 @@ const resolvers = {
     coverImageScale: async (parent, _, { repo }) => parent?.coverImageScale ?? (await repo.getAuthor({ id: parent.id }))?.coverImageScale ?? 1,
     profileLinks: async (parent, _, { repo }) => Array.isArray(parent?.profileLinks) ? parent.profileLinks : repo.getAuthorProfileLinks(parent.id),
     canReceivePrivateMessages: async (parent, _, { repo }) => repo.canReceivePrivateMessages(parent.id),
+    canManageAsManagedAccount: async (parent, _, { repo, currentUser, adminUserIds }) => Boolean(currentUser && isAdminUser(currentUser, adminUserIds) && await repo.getManagedAuthorAccount({ managedUserId: parent.id })),
   },
   AuthorProfile: {
     isMemorialPage: (parent) => Boolean(parent?.isMemorialPage),
