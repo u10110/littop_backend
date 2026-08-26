@@ -2888,7 +2888,7 @@ export function createPostgresRepository(pool) {
         left join forum_tags tg on tg.id = ftt.tag_id
         ${where ? `${where} and ft.status in ('open', 'closed')` : `where ft.status in ('open', 'closed')`}
         group by ft.id, fs.slug, u.id, ap.user_id
-        order by ft.is_pinned desc, (case when fs.slug = 'editor-column' then ft.created_at else coalesce(ft.last_post_at, ft.created_at) end) desc
+        order by ft.is_pinned desc, coalesce(ft.last_post_at, ft.created_at) desc, ft.id desc
         limit $${params.length - 1} offset $${params.length}
         `,
         params,
