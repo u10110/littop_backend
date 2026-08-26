@@ -1364,7 +1364,7 @@ export function createPostgresRepository(pool) {
       return authorFromRow(rows[0]);
     },
 
-    async listAuthors({ limit = 20, offset = 0, search = null, classicsOnly = false, memorialOnly = false, featuredOnly = false, childrenOnly = false } = {}) {
+    async listAuthors({ limit = 20, offset = 0, search = null, classicsOnly = false, memorialOnly = false, featuredOnly = false, childrenOnly = false, sort = 'rating' } = {}) {
       const page = buildLimitOffset(limit, offset);
       const conditions = [];
       const params = [];
@@ -1385,7 +1385,7 @@ export function createPostgresRepository(pool) {
         from users u
         join author_profiles ap on ap.user_id = u.id
         ${where ? `${where} and u.status <> 'deleted'` : `where u.status <> 'deleted'`}
-        order by ap.rating_total desc, u.registered_at desc
+        ${sort === 'newest' ? 'order by u.registered_at desc, u.id desc' : 'order by ap.rating_total desc, u.registered_at desc'}
         limit $${params.length - 1} offset $${params.length}
         `,
         params,
