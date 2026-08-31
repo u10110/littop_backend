@@ -57,6 +57,12 @@ const typeDefs = `#graphql
     profile: AuthorProfile
   }
 
+  enum AuthorSort {
+    ALPHABETICAL
+    REGISTERED
+    RATING
+  }
+
   type Author {
     id: ID!
     email: String!
@@ -436,7 +442,7 @@ const typeDefs = `#graphql
   type Query {
     health: Health!
     me: User
-    authors(limit: Int = 20, offset: Int = 0, search: String, classicsOnly: Boolean = false, memorialOnly: Boolean = false, featuredOnly: Boolean = false, childrenOnly: Boolean = false): [Author!]!
+    authors(limit: Int = 20, offset: Int = 0, search: String, classicsOnly: Boolean = false, memorialOnly: Boolean = false, featuredOnly: Boolean = false, childrenOnly: Boolean = false, sort: AuthorSort = RATING): [Author!]!
     onlineAuthors(limit: Int = 12): [Author!]!
     todayVisitors(limit: Int = 12): [Author!]!
     birthdayAuthors(limit: Int = 12): [Author!]!

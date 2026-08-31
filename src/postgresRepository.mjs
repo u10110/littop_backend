@@ -1364,7 +1364,7 @@ export function createPostgresRepository(pool) {
       return authorFromRow(rows[0]);
     },
 
-    async listAuthors({ limit = 20, offset = 0, search = null, classicsOnly = false, memorialOnly = false, featuredOnly = false, childrenOnly = false } = {}) {
+    async listAuthors({ limit = 20, offset = 0, search = null, classicsOnly = false, memorialOnly = false, featuredOnly = false, childrenOnly = false, sort = 'rating' } = {}) {
       const page = buildLimitOffset(limit, offset);
       const conditions = [];
       const params = [];
@@ -1378,6 +1378,11 @@ export function createPostgresRepository(pool) {
       if (childrenOnly) conditions.push('ap.is_child = true');
       params.push(page.limit, page.offset);
       const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
+      const authorOrder = {
+        alphabetical: 'lower(coalesce(ap.display_name, u.login)) asc, u.id asc',
+        registered: 'u.registered_at desc nulls last, u.id desc',
+        rating: 'ap.rating_total desc, u.id desc',
+      }[String(sort).toLowerCase()] || 'ap.rating_total desc, u.id desc';
       const { rows } = await pool.query(
         `
         select u.id, u.email, u.login, u.registered_at, u.last_seen_at, u.created_at, u.updated_at,
@@ -1385,7 +1390,7 @@ export function createPostgresRepository(pool) {
         from users u
         join author_profiles ap on ap.user_id = u.id
         ${where ? `${where} and u.status <> 'deleted'` : `where u.status <> 'deleted'`}
-        order by ap.rating_total desc, u.registered_at desc
+        order by ${authorOrder}
         limit $${params.length - 1} offset $${params.length}
         `,
         params,
@@ -1912,6 +1917,8 @@ export function createPostgresRepository(pool) {
 
     async listAnnouncedWorks({ limit = 12 } = {}) {
       const page = buildLimitOffset(limit, 0);
+      await pool.query(`update works w set announcement_active = false where w.announcement_active = true and exists (select 1 from work_announcements wa where wa.work_id = w.id and wa.expires_at <= now())`);
+      await pool.query(`delete from work_announcements where expires_at <= now()`);
       const { rows } = await pool.query(
         `
         select w.*, ws.code as section_code, wg.slug as genre_slug,
@@ -1931,6 +1938,7 @@ export function createPostgresRepository(pool) {
         join users u on u.id = w.author_user_id
         left join author_profiles ap on ap.user_id = u.id
         where w.status = 'published'
+          and wa.expires_at > now()
         order by wa.created_at desc, wa.id desc
         limit $1
         `,
@@ -2020,6 +2028,8 @@ export function createPostgresRepository(pool) {
       const client = await pool.connect();
       try {
         await client.query('begin');
+        await client.query(`update works w set announcement_active = false where w.announcement_active = true and exists (select 1 from work_announcements wa where wa.work_id = w.id and wa.expires_at <= now())`);
+        await client.query('delete from work_announcements where expires_at <= now()');
         const work = await client.query(
           `
           select id, author_user_id, announcement_active
@@ -2107,8 +2117,8 @@ export function createPostgresRepository(pool) {
 
         await client.query(
           `
-          insert into work_announcements (work_id, activated_by_user_id)
-          values ($1, $2)
+          insert into work_announcements (work_id, activated_by_user_id, expires_at)
+          values ($1, $2, now() + interval '7 days')
           `,
           [workId, activatedByUserId],
         );
