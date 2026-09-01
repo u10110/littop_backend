@@ -1918,7 +1918,7 @@ export function createPostgresRepository(pool) {
     async listAnnouncedWorks({ limit = 12 } = {}) {
       const page = buildLimitOffset(limit, 0);
       await pool.query(`update works w set announcement_active = false where w.announcement_active = true and exists (select 1 from work_announcements wa where wa.work_id = w.id and wa.expires_at <= now())`);
-      await pool.query(`delete from work_announcements where expires_at <= now()`);
+      await pool.query(`update work_announcements set revoked_at = coalesce(revoked_at, now()) where expires_at <= now() and revoked_at is null`);
       const { rows } = await pool.query(
         `
         select w.*, ws.code as section_code, wg.slug as genre_slug,
@@ -1938,6 +1938,7 @@ export function createPostgresRepository(pool) {
         join users u on u.id = w.author_user_id
         left join author_profiles ap on ap.user_id = u.id
         where w.status = 'published'
+          and wa.revoked_at is null
           and wa.expires_at > now()
         order by wa.created_at desc, wa.id desc
         limit $1
@@ -1992,16 +1993,17 @@ export function createPostgresRepository(pool) {
       }));
     },
 
-    async deactivateWorkAnnouncement({ workId }) {
+    async deactivateWorkAnnouncement({ workId, actorUserId = null }) {
       const client = await pool.connect();
       try {
         await client.query('begin');
         await client.query(
           `
-          delete from work_announcements
-          where work_id = $1
+          update work_announcements
+          set revoked_at = now(), revoked_by_user_id = $2
+          where work_id = $1 and revoked_at is null
           `,
-          [workId],
+          [workId, actorUserId],
         );
 
 
@@ -2029,7 +2031,7 @@ export function createPostgresRepository(pool) {
       try {
         await client.query('begin');
         await client.query(`update works w set announcement_active = false where w.announcement_active = true and exists (select 1 from work_announcements wa where wa.work_id = w.id and wa.expires_at <= now())`);
-        await client.query('delete from work_announcements where expires_at <= now()');
+        await client.query('update work_announcements set revoked_at = coalesce(revoked_at, now()) where expires_at <= now() and revoked_at is null');
         const work = await client.query(
           `
           select id, author_user_id, announcement_active
@@ -2057,7 +2059,7 @@ export function createPostgresRepository(pool) {
           return await this.getWorkById(workId);
         }
 
-        const stats = await client.query('select count(*)::int as cnt from work_announcements');
+        const stats = await client.query('select count(*)::int as cnt from work_announcements where revoked_at is null');
         const activeCount = Number(stats.rows[0]?.cnt ?? 0);
         if (activeCount >= 12) {
           const oldest = await client.query(
@@ -2081,14 +2083,17 @@ export function createPostgresRepository(pool) {
           }
           await client.query(
             `
-            delete from work_announcements
+            update work_announcements
+            set revoked_at = now(), revoked_by_user_id = $1
             where id = (
               select id
               from work_announcements
+              where revoked_at is null
               order by created_at asc, id asc
               limit 1
             )
             `,
+            [activatedByUserId],
           );
         }
 
@@ -2223,6 +2228,53 @@ export function createPostgresRepository(pool) {
         [authorUserId, page.limit],
       );
       return rows.map(authorReviewFeedItemFromRow);
+    },
+
+    async listMyWorkGroups({ authorUserId }) {
+      const { rows: groups } = await pool.query(`select id, name, description, position, coalesce(is_collapsed, false) as is_collapsed from work_collections where author_user_id = $1 order by position, id`, [authorUserId]);
+      const works = await this.listWorks({ authorId: authorUserId, status: null, limit: 500, offset: 0 });
+      const memberships = groups.length ? (await pool.query(`select collection_id, work_id from work_collection_items where collection_id = any($1::bigint[]) order by position, work_id`, [groups.map((g) => g.id)])).rows : [];
+      const byId = new Map(works.map((work) => [String(work.id), work]));
+      return groups.map((group) => ({ id: group.id, name: group.name, description: group.description, position: Number(group.position || 0), isCollapsed: Boolean(group.is_collapsed), works: memberships.filter((item) => String(item.collection_id) === String(group.id)).map((item) => byId.get(String(item.work_id))).filter(Boolean) }));
+    },
+
+    async createMyWorkGroup({ authorUserId, name, description = null }) {
+      const normalizedName = String(name ?? '').trim();
+      if (!normalizedName) throw new Error('Group name is required');
+      const code = `author-${authorUserId}-${slugify(normalizedName)}-${Date.now()}`;
+      const { rows } = await pool.query(`insert into work_collections (code, name, description, collection_type, is_public, author_user_id, position, is_collapsed) values ($1, $2, $3, 'curated', true, $4, (select coalesce(max(position), -1) + 1 from work_collections where author_user_id = $4), false) returning id, name, description, position, is_collapsed`, [code, normalizedName, String(description ?? '').trim() || null, authorUserId]);
+      const group = rows[0];
+      return { id: group.id, name: group.name, description: group.description, position: Number(group.position || 0), isCollapsed: Boolean(group.is_collapsed), works: [] };
+    },
+
+    async reorderMyWorkGroups({ authorUserId, groupIds }) {
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        for (let index = 0; index < groupIds.length; index += 1) await client.query('update work_collections set position = $1 where id = $2 and author_user_id = $3', [index, groupIds[index], authorUserId]);
+        await client.query('commit');
+        return this.listMyWorkGroups({ authorUserId });
+      } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
+    },
+
+    async setMyWorkGroupItems({ authorUserId, groupId, workIds }) {
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        const group = await client.query('select id from work_collections where id = $1 and author_user_id = $2 for update', [groupId, authorUserId]);
+        if (!group.rows.length) throw new Error('Work group not found');
+        const valid = workIds.length ? await client.query('select id from works where id = any($1::bigint[]) and author_user_id = $2', [workIds, authorUserId]) : { rows: [] };
+        await client.query('delete from work_collection_items where collection_id = $1', [groupId]);
+        for (let index = 0; index < valid.rows.length; index += 1) await client.query('insert into work_collection_items (collection_id, work_id, position) values ($1, $2, $3)', [groupId, valid.rows[index].id, index]);
+        await client.query('commit');
+        return (await this.listMyWorkGroups({ authorUserId })).find((item) => String(item.id) === String(groupId));
+      } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
+    },
+
+    async setMyWorkGroupCollapsed({ authorUserId, groupId, isCollapsed }) {
+      const { rows } = await pool.query('update work_collections set is_collapsed = $1 where id = $2 and author_user_id = $3 returning id', [Boolean(isCollapsed), groupId, authorUserId]);
+      if (!rows.length) throw new Error('Work group not found');
+      return (await this.listMyWorkGroups({ authorUserId })).find((item) => String(item.id) === String(groupId));
     },
 
     async listWorks({ limit = 20, offset = 0, sectionCode = null, genreSlug = null, authorId = null, search = null, status = 'published', createdToday = false } = {}) {
@@ -2387,6 +2439,113 @@ export function createPostgresRepository(pool) {
       } finally {
         client.release();
       }
+    },
+
+    async adminUpdateWork({ workId, ...input }) {
+      return this.updateWork({ workId, ...input, canManageAll: true, authorUserId: null });
+    },
+
+    async adminReassignWorkGroupOwner({ groupId, destinationAuthorId }) {
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        const group = await client.query('select id, author_user_id from work_collections where id = $1 for update', [groupId]);
+        if (!group.rows.length) throw new Error('Work group not found');
+        const destination = await client.query("select id from users where id = $1 and status = 'active' for update", [destinationAuthorId]);
+        if (!destination.rows.length) throw new Error('Destination author not found or inactive');
+        await client.query('update work_collections set author_user_id = $1, updated_at = now() where id = $2', [destinationAuthorId, groupId]);
+        const works = await client.query('select work_id from work_collection_items where collection_id = $1', [groupId]);
+        await client.query('update works set author_user_id = $1, updated_at = now() where id = any($2::bigint[])', [destinationAuthorId, works.rows.map((row) => row.work_id)]);
+        for (const authorId of [group.rows[0].author_user_id, destinationAuthorId]) await client.query("update author_profiles set works_count_cached = (select count(*) from works where author_user_id = $1 and status <> 'archived') where user_id = $1", [authorId]);
+        await client.query('commit');
+        return (await this.listMyWorkGroups({ authorUserId: destinationAuthorId })).find((item) => String(item.id) === String(groupId));
+      } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
+    },
+
+    async adminReassignWorkOwner({ workId, destinationAuthorId }) {
+      if (!workId || !destinationAuthorId) throw new Error('Work and destination author are required');
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        const workResult = await client.query('select id, author_user_id from works where id = $1 for update', [workId]);
+        const current = workResult.rows[0];
+        if (!current) throw new Error('Work not found');
+        const destination = await client.query("select id from users where id = $1 and status = 'active' for update", [destinationAuthorId]);
+        if (!destination.rows[0]) throw new Error('Destination author not found or inactive');
+        if (String(current.author_user_id) !== String(destinationAuthorId)) {
+          await client.query('update works set author_user_id = $1, updated_at = now() where id = $2', [destinationAuthorId, workId]);
+          for (const authorId of [current.author_user_id, destinationAuthorId]) {
+            await client.query("update author_profiles set works_count_cached = (select count(*) from works where author_user_id = $1 and status <> 'archived') where user_id = $1", [authorId]);
+          }
+        }
+        await client.query('commit');
+        return this.getWorkById(workId);
+      } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
+    },
+
+    async adminSoftDeleteWork({ workId }) {
+      return this.softDeleteWork({ workId, canManageAll: true, authorUserId: null });
+    },
+
+    async adminSoftDeleteWorkComment({ commentId }) {
+      return this.softDeleteWorkComment({ commentId, actorUserId: null, canManageAll: true });
+    },
+
+    async adminSoftDeleteForumTopic({ topicId }) {
+      return this.softDeleteForumTopic({ topicId, authorUserId: null, canManageAll: true });
+    },
+
+    async adminSoftDeleteForumPost({ postId }) {
+      return this.softDeleteForumPost({ postId, authorUserId: null, canManageAll: true });
+    },
+
+    async adminDeactivateWorkAnnouncement({ workId, actorUserId }) {
+      return this.deactivateWorkAnnouncement({ workId, actorUserId });
+    },
+
+    // COPY preserves the original work rows (and author), copying only
+    // collection membership. MOVE changes ownership and removes source links.
+    async adminTransferWorkGroup({ sourceAuthorId, destinationAuthorId, sourceGroupId, destinationGroupId = null, mode = 'move', conflictPolicy = 'error' }) {
+      if (!sourceAuthorId || !destinationAuthorId || !sourceGroupId || String(sourceAuthorId) === String(destinationAuthorId)) throw new Error('Invalid source, destination or group id');
+      if (!['move', 'copy'].includes(mode) || !['error', 'rename'].includes(conflictPolicy)) throw new Error('Invalid transfer policy');
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        const sourceCollection = await client.query('select id, code, name, description, section_id, collection_type, is_public from work_collections where id = $1 and author_user_id = $2 for update', [sourceGroupId, sourceAuthorId]);
+        if (!sourceCollection.rows.length) throw new Error('Source group does not belong to source author');
+        const source = await client.query(`select wci.work_id, wci.position, w.author_user_id from work_collection_items wci join works w on w.id = wci.work_id where wci.collection_id = $1 order by wci.position, wci.work_id for update`, [sourceGroupId]);
+        if (!source.rows.length) throw new Error('Source group is empty or does not belong to source author');
+        if (source.some((row) => String(row.author_user_id) !== String(sourceAuthorId))) throw new Error('Source group contains work owned by another author');
+        let targetId;
+        if (destinationGroupId != null) {
+          const target = await client.query('select id from work_collections where id = $1 and author_user_id = $2 for update', [destinationGroupId, destinationAuthorId]);
+          if (!target.rows.length) throw new Error('Destination group does not belong to destination author');
+          targetId = target.rows[0].id;
+        } else {
+          const code = `admin-transfer-${sourceGroupId}-to-${destinationAuthorId}`;
+          await client.query(`insert into work_collections (code, name, description, section_id, collection_type, is_public, author_user_id)
+            values ($1, $2, $3, $4, $5, $6, $7) on conflict (code) do nothing`, [code, sourceCollection.rows[0].name, sourceCollection.rows[0].description, sourceCollection.rows[0].section_id, sourceCollection.rows[0].collection_type, sourceCollection.rows[0].is_public, destinationAuthorId]);
+          const target = await client.query('select id from work_collections where code = $1 and author_user_id = $2 for update', [code, destinationAuthorId]);
+          if (!target.rows.length) throw new Error('Transfer destination code is owned by another account');
+          targetId = target.rows[0].id;
+        }
+        const dest = await client.query('select work_id from work_collection_items where collection_id = $1', [targetId]);
+        const existing = new Set(dest.rows.map((row) => String(row.work_id)));
+        let transferredWorksCount = 0; let skippedWorksCount = 0;
+        for (const row of source.rows) {
+          if (existing.has(String(row.work_id))) {
+            if (conflictPolicy === 'error') throw new Error(`Work ${row.work_id} already exists in destination group`);
+            skippedWorksCount += 1;
+            continue;
+          }
+          if (mode === 'move') await client.query('update works set author_user_id = $1, updated_at = now() where id = $2 and author_user_id = $3', [destinationAuthorId, row.work_id, sourceAuthorId]);
+          await client.query('insert into work_collection_items (collection_id, work_id, position) values ($1, $2, $3) on conflict do nothing', [targetId, row.work_id, row.position]);
+          if (mode === 'move') await client.query('delete from work_collection_items where collection_id = $1 and work_id = $2', [sourceGroupId, row.work_id]);
+          transferredWorksCount += 1;
+        }
+        await client.query('commit');
+        return { groupId: targetId, sourceAuthorId, destinationAuthorId, mode, conflictPolicy, transferredWorksCount, skippedWorksCount };
+      } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
     },
 
     async updateWork({ workId, authorUserId, canManageAll = false, sectionCode, genreSlug = null, title, summary = null, body = null, excerpt = null, status = 'published', projectFormat = null, pdfUrl = null, pdfFileName = null, audioUrl = null, audioFileName = null }) {

@@ -395,6 +395,40 @@ const typeDefs = `#graphql
     audioFileName: String
   }
 
+  type AuthorWorkGroup {
+    id: ID!
+    name: String!
+    description: String
+    position: Int!
+    isCollapsed: Boolean!
+    works: [Work!]!
+  }
+
+  input AuthorWorkGroupInput {
+    name: String!
+    description: String
+  }
+
+  enum WorkGroupTransferMode {
+    MOVE
+    COPY
+  }
+
+  enum WorkGroupConflictPolicy {
+    ERROR
+    RENAME
+  }
+
+  type AdminWorkGroupTransferResult {
+    groupId: ID!
+    sourceAuthorId: ID!
+    destinationAuthorId: ID!
+    mode: String!
+    conflictPolicy: String!
+    transferredWorksCount: Int!
+    skippedWorksCount: Int!
+  }
+
   input CreateForumTopicInput {
     sectionSlug: String!
     title: String!
@@ -448,6 +482,8 @@ const typeDefs = `#graphql
     birthdayAuthors(limit: Int = 12): [Author!]!
     author(id: ID, login: String): Author
     works(limit: Int = 20, offset: Int = 0, sectionCode: String, genreSlug: String, authorId: ID, search: String, status: String = "published", createdToday: Boolean): [Work!]!
+    myWorkGroups: [AuthorWorkGroup!]!
+    authorWorkGroups(authorId: ID!): [AuthorWorkGroup!]!
     workGenres(sectionCode: String): [WorkGenre!]!
     announcedWorks(limit: Int = 12): [Work!]!
     announcements(limit: Int = 12): [Work!]!
@@ -493,8 +529,21 @@ const typeDefs = `#graphql
     adminDeleteUser(userId: ID!): Boolean!
     createWork(input: CreateWorkInput!): Work!
     adminCreateWork(authorId: ID!, input: CreateWorkInput!): Work!
+    adminUpdateWork(workId: ID!, input: UpdateWorkInput!): Work!
+    adminReassignWorkOwner(workId: ID!, destinationAuthorId: ID!): Work!
+    adminReassignWorkGroupOwner(groupId: ID!, destinationAuthorId: ID!): AuthorWorkGroup!
+    adminTransferWorkGroup(sourceAuthorId: ID!, destinationAuthorId: ID!, sourceGroupId: ID!, destinationGroupId: ID, mode: WorkGroupTransferMode!, conflictPolicy: WorkGroupConflictPolicy!): AdminWorkGroupTransferResult!
+    createMyWorkGroup(input: AuthorWorkGroupInput!): AuthorWorkGroup!
+    reorderMyWorkGroups(groupIds: [ID!]!): [AuthorWorkGroup!]!
+    setMyWorkGroupItems(groupId: ID!, workIds: [ID!]!): AuthorWorkGroup!
+    setMyWorkGroupCollapsed(groupId: ID!, isCollapsed: Boolean!): AuthorWorkGroup!
     updateWork(workId: ID!, input: UpdateWorkInput!): Work!
     deleteWork(workId: ID!): Work!
+    adminDeleteWork(workId: ID!): Work!
+    adminDeleteWorkComment(commentId: ID!): WorkComment!
+    adminDeleteForumTopic(topicId: ID!): ForumTopic!
+    adminDeleteForumPost(postId: ID!): ForumPost!
+    adminDeactivateWorkAnnouncement(workId: ID!): Work!
     updateRadioTrack(input: RadioTrackUpdateInput!): RadioTrack!
     deleteRadioTrack(id: ID!): RadioTrack!
     updateSiteSetting(key: String!, value: String!): SiteSetting!
@@ -533,7 +582,7 @@ function requireAuth(currentUser) {
 }
 
 function isAdminUser(user, adminUserIds) {
-  return Boolean(user?.id) && adminUserIds?.has(String(user.id));
+  return Boolean(user?.id) && (user.role === 'admin' || adminUserIds?.has(String(user.id)));
 }
 
 // Editors and admins may manage editorial content (editor-column topics,
@@ -655,6 +704,8 @@ const resolvers = {
     birthdayAuthors: async (_, args, { repo }) => repo.listBirthdayAuthors(args),
     author: async (_, args, { repo }) => repo.getAuthor(args),
     works: async (_, args, { repo }) => repo.listWorks(args),
+    myWorkGroups: async (_, __, { repo, currentUser }) => repo.listMyWorkGroups({ authorUserId: requireAuth(currentUser).id }),
+    authorWorkGroups: async (_, { authorId }, { repo }) => repo.listMyWorkGroups({ authorUserId: authorId }),
     workGenres: async (_, args, { repo }) => repo.listWorkGenres(args),
     announcedWorks: async (_, args, { repo }) => repo.listAnnouncedWorks(args),
     announcements: async (_, args, { repo }) => repo.listAnnouncedWorks(args),
@@ -975,6 +1026,52 @@ const resolvers = {
         });
       }
       return repo.createWork({ ...input, authorUserId: authorId });
+    },
+    adminUpdateWork: async (_, { workId, input }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      if (!isAdminUser(user, adminUserIds)) throw new GraphQLError('Only admin can edit any work', { extensions: { code: 'FORBIDDEN' } });
+      return repo.adminUpdateWork({ workId, ...input });
+    },
+    adminReassignWorkOwner: async (_, { workId, destinationAuthorId }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      if (!isAdminUser(user, adminUserIds)) throw new GraphQLError('Only admin can reassign work ownership', { extensions: { code: 'FORBIDDEN' } });
+      return repo.adminReassignWorkOwner({ workId, destinationAuthorId });
+    },
+    adminReassignWorkGroupOwner: async (_, { groupId, destinationAuthorId }, { currentUser, repo, adminUserIds }) => { const user = requireAuth(currentUser); if (!isAdminUser(user, adminUserIds)) throw new GraphQLError('Only admin can reassign work group ownership', { extensions: { code: 'FORBIDDEN' } }); return repo.adminReassignWorkGroupOwner({ groupId, destinationAuthorId }); },
+    createMyWorkGroup: async (_, { input }, { currentUser, repo }) => repo.createMyWorkGroup({ authorUserId: requireAuth(currentUser).id, ...input }),
+    reorderMyWorkGroups: async (_, { groupIds }, { currentUser, repo }) => repo.reorderMyWorkGroups({ authorUserId: requireAuth(currentUser).id, groupIds }),
+    setMyWorkGroupItems: async (_, { groupId, workIds }, { currentUser, repo }) => repo.setMyWorkGroupItems({ authorUserId: requireAuth(currentUser).id, groupId, workIds }),
+    setMyWorkGroupCollapsed: async (_, { groupId, isCollapsed }, { currentUser, repo }) => repo.setMyWorkGroupCollapsed({ authorUserId: requireAuth(currentUser).id, groupId, isCollapsed }),
+    adminTransferWorkGroup: async (_, args, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      if (!isAdminUser(user, adminUserIds)) throw new GraphQLError('Only admin can transfer work groups', { extensions: { code: 'FORBIDDEN' } });
+      if (String(args.sourceAuthorId) === String(args.destinationAuthorId)) throw new GraphQLError('Source and destination must differ', { extensions: { code: 'BAD_USER_INPUT' } });
+      return repo.adminTransferWorkGroup({ ...args, mode: String(args.mode).toLowerCase(), conflictPolicy: String(args.conflictPolicy).toLowerCase(), actorUserId: user.id });
+    },
+    adminDeleteWork: async (_, { workId }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      if (!isAdminUser(user, adminUserIds)) throw new GraphQLError('Only admin can delete works', { extensions: { code: 'FORBIDDEN' } });
+      return repo.adminSoftDeleteWork({ workId, actorUserId: user.id });
+    },
+    adminDeleteWorkComment: async (_, { commentId }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      if (!isAdminUser(user, adminUserIds)) throw new GraphQLError('Only admin can delete comments', { extensions: { code: 'FORBIDDEN' } });
+      return repo.adminSoftDeleteWorkComment({ commentId, actorUserId: user.id });
+    },
+    adminDeleteForumTopic: async (_, { topicId }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      if (!isAdminUser(user, adminUserIds)) throw new GraphQLError('Only admin can delete topics', { extensions: { code: 'FORBIDDEN' } });
+      return repo.adminSoftDeleteForumTopic({ topicId, actorUserId: user.id });
+    },
+    adminDeleteForumPost: async (_, { postId }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      if (!isAdminUser(user, adminUserIds)) throw new GraphQLError('Only admin can delete posts', { extensions: { code: 'FORBIDDEN' } });
+      return repo.adminSoftDeleteForumPost({ postId, actorUserId: user.id });
+    },
+    adminDeactivateWorkAnnouncement: async (_, { workId }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      if (!isAdminUser(user, adminUserIds)) throw new GraphQLError('Only admin can remove announcements', { extensions: { code: 'FORBIDDEN' } });
+      return repo.adminDeactivateWorkAnnouncement({ workId, actorUserId: user.id });
     },
     updateWork: async (_, { workId, input }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
