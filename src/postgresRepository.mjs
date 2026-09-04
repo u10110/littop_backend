@@ -3609,6 +3609,14 @@ export function createPostgresRepository(pool) {
       }
     },
 
+    async countUnreadDirectMessages({ userId } = {}) {
+      if (!userId) return 0;
+      const { rows } = await pool.query(
+        "select count(*)::int as count from private_messages where recipient_user_id = $1 and read_at is null and status = 'visible'",
+        [userId],
+      );
+      return Number(rows[0]?.count ?? 0);
+    },
     async listPrivateDialogs({ userId, limit = 50 } = {}) {
       if (!userId) return [];
       const page = buildLimitOffset(limit, 0);

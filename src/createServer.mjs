@@ -488,6 +488,7 @@ const typeDefs = `#graphql
     announcedWorks(limit: Int = 12): [Work!]!
     announcements(limit: Int = 12): [Work!]!
     recentWorkComments(limit: Int = 12): [HomeComment!]!
+    unreadDirectMessagesCount: Int!
     work(id: ID, slug: String): Work
     workComments(workId: ID!, limit: Int = 50, offset: Int = 0): [WorkComment!]!
     workViewers(workId: ID!, limit: Int = 100): [WorkViewer!]!
@@ -710,6 +711,7 @@ const resolvers = {
     announcedWorks: async (_, args, { repo }) => repo.listAnnouncedWorks(args),
     announcements: async (_, args, { repo }) => repo.listAnnouncedWorks(args),
     recentWorkComments: async (_, args, { repo }) => repo.listRecentWorkComments(args),
+    unreadDirectMessagesCount: async (_, __, { repo, currentUser }) => repo.countUnreadDirectMessages({ userId: requireAuth(currentUser).id }),
     work: async (_, args, { repo, currentUser }) => {
       const work = args.id
         ? await repo.getWorkById(args.id)
