@@ -33,11 +33,23 @@ Node.js backend for `littop` built with:
 
 ## Required database
 
-Apply the production migration first:
+## Database migrations
+
+Apply missing SQL migrations with:
 
 ```bash
-psql "$DATABASE_URL" -f migrations/001_init.sql
+npm run db:migrate
 ```
+
+The command records each successfully applied file in `schema_migrations`, takes a PostgreSQL advisory lock to prevent parallel runs, verifies checksums, and skips the mockup seed by default. Preview changes with `npm run db:migrate -- --dry-run`.
+
+For an already populated database which predates migration tracking, run this once after verifying the schema:
+
+```bash
+npm run db:migrate -- --baseline
+```
+
+`--baseline` records the current migration files without executing SQL. To include the mockup seed deliberately, use `npm run db:migrate -- --include-seed`.
 
 ## Environment
 

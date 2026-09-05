@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node --watch src/server.mjs",
     "start": "node src/server.mjs",
-    "test": "node --test"
+    "test": "node --test",
+    "db:migrate": "node scripts/migrate.mjs"
   },
   "dependencies": {
     "@apollo/server": "^4.11.3",
