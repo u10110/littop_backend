@@ -2247,6 +2247,25 @@ export function createPostgresRepository(pool) {
       return { id: group.id, name: group.name, description: group.description, position: Number(group.position || 0), isCollapsed: Boolean(group.is_collapsed), works: [] };
     },
 
+    async updateMyWorkGroup({ authorUserId, groupId, name, description = null }) {
+      const normalizedName = String(name ?? '').trim();
+      if (!normalizedName) throw new Error('Group name is required');
+      const { rows } = await pool.query(
+        `update work_collections
+         set name = $1, description = $2
+         where id = $3 and author_user_id = $4
+         returning id, name, description, position, coalesce(is_collapsed, false) as is_collapsed`,
+        [normalizedName, String(description ?? '').trim() || null, groupId, authorUserId],
+      );
+      if (!rows.length) throw new Error('Work group not found');
+      const group = rows[0];
+      const allGroups = await this.listMyWorkGroups({ authorUserId });
+      return allGroups.find((item) => String(item.id) === String(group.id)) || {
+        id: group.id, name: group.name, description: group.description,
+        position: Number(group.position || 0), isCollapsed: Boolean(group.is_collapsed), works: [],
+      };
+    },
+
     async reorderMyWorkGroups({ authorUserId, groupIds }) {
       const client = await pool.connect();
       try {
