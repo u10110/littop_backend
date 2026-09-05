@@ -2232,7 +2232,7 @@ export function createPostgresRepository(pool) {
 
     async listMyWorkGroups({ authorUserId }) {
       const { rows: groups } = await pool.query(`select id, name, description, position, coalesce(is_collapsed, false) as is_collapsed from work_collections where author_user_id = $1 order by position, id`, [authorUserId]);
-      const works = await this.listWorks({ authorId: authorUserId, status: null, limit: 500, offset: 0 });
+      const works = (await this.listWorks({ authorId: authorUserId, status: null, limit: 500, offset: 0 })).filter((work) => work.status !== 'archived');
       const memberships = groups.length ? (await pool.query(`select collection_id, work_id from work_collection_items where collection_id = any($1::bigint[]) order by position, work_id`, [groups.map((g) => g.id)])).rows : [];
       const byId = new Map(works.map((work) => [String(work.id), work]));
       return groups.map((group) => ({ id: group.id, name: group.name, description: group.description, position: Number(group.position || 0), isCollapsed: Boolean(group.is_collapsed), works: memberships.filter((item) => String(item.collection_id) === String(group.id)).map((item) => byId.get(String(item.work_id))).filter(Boolean) }));
