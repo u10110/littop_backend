@@ -2263,7 +2263,7 @@ export function createPostgresRepository(pool) {
         await client.query('begin');
         const group = await client.query('select id from work_collections where id = $1 and author_user_id = $2 for update', [groupId, authorUserId]);
         if (!group.rows.length) throw new Error('Work group not found');
-        const valid = workIds.length ? await client.query('select id from works where id = any($1::bigint[]) and author_user_id = $2', [workIds, authorUserId]) : { rows: [] };
+        const valid = workIds.length ? await client.query('select id from works where id = any($1::bigint[]) and author_user_id = $2 order by array_position($1::bigint[], id)', [workIds, authorUserId]) : { rows: [] };
         await client.query('delete from work_collection_items where collection_id = $1', [groupId]);
         for (let index = 0; index < valid.rows.length; index += 1) await client.query('insert into work_collection_items (collection_id, work_id, position) values ($1, $2, $3)', [groupId, valid.rows[index].id, index]);
         await client.query('commit');
