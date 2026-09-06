@@ -1,4 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
+import { appendFileSync } from 'node:fs';
 import net from 'node:net';
 import tls from 'node:tls';
 
@@ -8,9 +9,36 @@ export const MIN_PASSWORD_LENGTH = 8;
 const PASSWORD_RESET_EXPIRES_IN = '1h';
 
 function cleanText(value) {
-  console.log(typeof value)
   if (typeof value !== 'string') return '';
   return value.trim();
+}
+
+function maskEmail(value) {
+  const email = cleanText(value);
+  if (!email) return '<empty>';
+  const at = email.indexOf('@');
+  if (at <= 0) return '<redacted>';
+  return `${email[0]}***${email.slice(at)}`;
+}
+
+function smtpDebug(env, event, details = {}) {
+  if (!parseBoolean(env.SMTP_DEBUG, false)) return;
+  const safeDetails = {
+    event,
+    host: cleanText(env.SMTP_HOST) || '<empty>',
+    port: Number(env.SMTP_PORT || 0) || '<empty>',
+    secure: parseBoolean(env.SMTP_SECURE, true),
+    user: maskEmail(env.SMTP_USER),
+    from: maskEmail(env.SMTP_FROM_EMAIL),
+    ...details,
+  };
+  const line = JSON.stringify({ timestamp: new Date().toISOString(), ...safeDetails });
+  console.info('[smtp-debug]', line);
+  try {
+    appendFileSync('/home/agent/littop_backend/logs/smtp-debug.jsonl', `${line}\n`, { mode: 0o640 });
+  } catch {
+    // Diagnostics must never break mail delivery.
+  }
 }
 
 function encodeHeader(value) {
@@ -114,12 +142,21 @@ function openSocket({ host, port, secure }) {
   });
 }
 
-async function sendSmtpMail({ host, port, secure, user, password, fromEmail, to, subject, text }) {
-  let socket = await openSocket({ host, port, secure });
+async function sendSmtpMail({ host, port, secure, user, password, fromEmail, to, subject, text, debugEnv }) {
+  smtpDebug(debugEnv, 'connect:start', { to: maskEmail(to), subject: cleanText(subject) });
+  let socket;
+  try {
+    socket = await openSocket({ host, port, secure });
+    smtpDebug(debugEnv, 'connect:ok');
+  } catch (error) {
+    smtpDebug(debugEnv, 'connect:error', { error: error instanceof Error ? error.message : String(error) });
+    throw error;
+  }
   let queue = createSmtpResponseQueue(socket);
 
   async function readResponse(expectedCodes) {
     const response = await queue.read();
+    smtpDebug(debugEnv, 'response', { code: response.code });
     if (!expectedCodes.includes(response.code)) {
       throw new Error(`SMTP error ${response.code}: ${response.text}`);
     }
@@ -152,10 +189,11 @@ async function sendSmtpMail({ host, port, secure, user, password, fromEmail, to,
     await upgradeToTls();
     await writeCommand(`EHLO ${localHostName}`, [250]);
   }
-  console.log(fromEmail,to)
+  smtpDebug(debugEnv, 'auth:start');
   await writeCommand('AUTH LOGIN', [334]);
   await writeCommand(Buffer.from(user, 'utf8').toString('base64'), [334]);
   await writeCommand(Buffer.from(password, 'utf8').toString('base64'), [235]);
+  smtpDebug(debugEnv, 'auth:ok');
   await writeCommand(`MAIL FROM:<${buildEnvelopeAddress(fromEmail)}>`, [250]);
   await writeCommand(`RCPT TO:<${buildEnvelopeAddress(to)}>`, [250, 251]);
   await writeCommand('DATA', [354]);
@@ -176,6 +214,7 @@ async function sendSmtpMail({ host, port, secure, user, password, fromEmail, to,
   socket.write(`${message}\r\n.\r\n`);
   await readResponse([250]);
   await writeCommand('QUIT', [221]);
+  smtpDebug(debugEnv, 'send:ok', { to: maskEmail(to) });
   socket.end();
 }
 
@@ -245,7 +284,7 @@ export function createMailer(env = process.env) {
   const password = cleanText(env.SMTP_PASSWORD);
   const secure = parseBoolean(env.SMTP_SECURE, true);
   const port = Number(env.SMTP_PORT || (secure ? 465 : 587));
-  const fromEmail = cleanText(process.env.SMTP_FROM_EMAIL);
+  const fromEmail = cleanText(env.SMTP_FROM_EMAIL);
   const enabled = Boolean(host && port && user && password && fromEmail);
 
   async function ensureConfigured() {
@@ -257,17 +296,26 @@ export function createMailer(env = process.env) {
   async function sendMessage({ to, subject, text }) {
     await ensureConfigured();
     
-    await sendSmtpMail({
-      host,
-      port,
-      secure,
-      user,
-      password,
-      fromEmail,
-      to,
-      subject,
-      text,
-    });
+    try {
+      await sendSmtpMail({
+        host,
+        port,
+        secure,
+        user,
+        password,
+        fromEmail,
+        to,
+        subject,
+        text,
+        debugEnv: env,
+      });
+    } catch (error) {
+      smtpDebug(env, 'send:error', {
+        to: maskEmail(to),
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   }
 
   return {
