@@ -153,7 +153,7 @@ function resolveDiscussionStorageDir(env) {
   return configured ? resolve(configured) : resolve(process.cwd(), 'uploads', 'forum');
 }
 
-function resolveWorkMediaStorageDir(env) {
+export function resolveWorkMediaStorageDir(env) {
   const configured = String(env.WORK_MEDIA_UPLOAD_DIR || '').trim();
   return configured ? resolve(configured) : resolve(process.cwd(), 'uploads', 'works');
 }
@@ -186,7 +186,7 @@ function resolveRequestedStoredFileName(pathname, prefix) {
   return normalized;
 }
 
-async function uploadFile(storagePath, fileBuffer, mimeType, { env, localPath } = {}) {
+export async function uploadFile(storagePath, fileBuffer, mimeType, { env, localPath } = {}) {
   if (!isS3UploadEnabled(env)) {
     if (!localPath) throw new Error('Local upload path is required');
     await mkdir(resolve(localPath, '..'), { recursive: true });
