@@ -825,6 +825,7 @@ const resolvers = {
 
       const user = await findUserByEmailForReset(repo, normalizedEmail);
       if (!user) {
+        console.info('Password reset: user not found')
         return true;
       }
 
