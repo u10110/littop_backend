@@ -52,3 +52,16 @@ test('a concurrent manual upload wins over a generated image', async () => {
 
   assert.deepEqual(result, { selected: 1, generated: 0, skipped: 1, failed: 0 });
 });
+
+
+test('work-id mode selects exactly the requested work before generation', async () => {
+  const selected = [{ id: 42, title: 'Нужное произведение' }];
+  const calls = [];
+  const result = await generateMissingWorkImages({
+    works: selected,
+    generateImage: async (prompt, work) => { calls.push({ prompt, work }); return { bytes: Buffer.from('png'), mimeType: 'image/png', extension: '.png' }; },
+    saveGeneratedImage: async () => ({ applied: true, imageUrl: '/media/works/42.png' }),
+  });
+  assert.deepEqual(result, { selected: 1, generated: 1, skipped: 0, failed: 0 });
+  assert.equal(calls[0].work.id, 42);
+});

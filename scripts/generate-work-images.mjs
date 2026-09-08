@@ -13,11 +13,14 @@ const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
 const limitValue = args.find((arg) => arg.startsWith('--limit='));
 const statusValue = args.find((arg) => arg.startsWith('--status='));
-const unknown = args.filter((arg) => arg !== '--dry-run' && !arg.startsWith('--limit=') && !arg.startsWith('--status='));
+const workIdValue = args.find((arg) => arg.startsWith('--work-id='));
+const unknown = args.filter((arg) => arg !== '--dry-run' && !arg.startsWith('--limit=') && !arg.startsWith('--status=') && !arg.startsWith('--work-id='));
 if (unknown.length) { console.error(`Unknown option(s): ${unknown.join(', ')}`); process.exit(2); }
 const limit = limitValue ? Number(limitValue.slice('--limit='.length)) : 10;
 if (!Number.isInteger(limit) || limit < 1 || limit > 100) { console.error('--limit must be an integer from 1 to 100'); process.exit(2); }
 const status = statusValue ? statusValue.slice('--status='.length).trim() : null;
+const workId = workIdValue ? workIdValue.slice('--work-id='.length).trim() : null;
+if (workIdValue && (!workId || !/^\d+$/.test(workId))) { console.error('--work-id must be a positive integer'); process.exit(2); }
 const databaseUrl = String(process.env.DATABASE_URL || '').trim().replace(/\s+#.*$/, '');
 if (!databaseUrl) { console.error('DATABASE_URL is required'); process.exit(2); }
 if (!dryRun && !String(process.env.CODEX_SALE_API_KEY || '').trim()) { console.error('CODEX_SALE_API_KEY is required unless --dry-run is used'); process.exit(2); }
@@ -26,6 +29,8 @@ const pool = createPool(databaseUrl);
 try {
   const params = [];
   const conditions = ["coalesce(nullif(btrim(w.image_url), ''), '') = ''"];
+  if (workId) { params.push(workId); conditions.push(`w.id = $${params.length}`); }
+  if (workId) { params.push(workId); conditions.push(`w.id = $${params.length}`); }
   if (status) { params.push(status); conditions.push(`w.status = $${params.length}`); }
   else conditions.push("w.status <> 'archived'");
   params.push(limit);
