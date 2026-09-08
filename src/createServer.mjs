@@ -816,7 +816,7 @@ const resolvers = {
       return { token, user };
     },
     requestPasswordReset: async (_, { email }, { repo, jwtSecret }) => {
-      console.log(email)
+      console.log(_)
       const normalizedEmail = String(email || '').trim().toLowerCase();
       if (!normalizedEmail) {
         throw new GraphQLError('Email is required', {
