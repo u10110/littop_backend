@@ -65,3 +65,19 @@ test('work-id mode selects exactly the requested work before generation', async 
   assert.deepEqual(result, { selected: 1, generated: 1, skipped: 0, failed: 0 });
   assert.equal(calls[0].work.id, 42);
 });
+
+
+test('accepts codex.sale pure b64_json response', async () => {
+  const { generateImageWithCodexSale } = await import('../src/workImageGeneration.mjs');
+  const response = await generateImageWithCodexSale({
+    prompt: 'test',
+    env: { CODEX_SALE_API_KEY: 'test', CODEX_SALE_IMAGE_MODEL: 'gpt-image-2', CODEX_SALE_IMAGE_ENDPOINT: 'https://codex.sale/v1/images/generations' },
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [{ b64_json: Buffer.from('png').toString('base64') }] }),
+    }),
+  });
+  assert.equal(response.mimeType, 'image/png');
+  assert.deepEqual(response.bytes, Buffer.from('png'));
+});

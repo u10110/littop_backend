@@ -30,10 +30,15 @@ function imageExtension(mimeType) {
   return IMAGE_MIME_TYPES.get(String(mimeType || '').toLowerCase()) || '.png';
 }
 
-function decodeDataUrl(value) {
-  const match = String(value || '').match(/^data:([^;]+);base64,(.+)$/i);
-  if (!match) return null;
-  return { mimeType: match[1].toLowerCase(), bytes: Buffer.from(match[2], 'base64') };
+function decodeBase64Image(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const dataUrl = raw.match(/^data:([^;]+);base64,(.+)$/i);
+  const mimeType = dataUrl?.[1]?.toLowerCase() || 'image/png';
+  const encoded = dataUrl?.[2] || raw;
+  if (!/^[A-Za-z0-9+/=\s]+$/.test(encoded)) return null;
+  const bytes = Buffer.from(encoded.replace(/\s+/g, ''), 'base64');
+  return bytes.length ? { mimeType, bytes } : null;
 }
 
 export async function generateImageWithCodexSale({ prompt, env, fetchImpl = globalThis.fetch }) {
@@ -52,8 +57,8 @@ export async function generateImageWithCodexSale({ prompt, env, fetchImpl = glob
     throw new Error(message);
   }
   const item = body?.data?.[0];
-  const fromDataUrl = decodeDataUrl(item?.b64_json);
-  if (fromDataUrl?.bytes?.length) return { ...fromDataUrl, extension: imageExtension(fromDataUrl.mimeType) };
+  const fromBase64 = decodeBase64Image(item?.b64_json);
+  if (fromBase64?.bytes?.length) return { ...fromBase64, extension: imageExtension(fromBase64.mimeType) };
   if (item?.url) {
     const imageResponse = await fetchImpl(item.url);
     if (!imageResponse.ok) throw new Error(`Generated image download returned HTTP ${imageResponse.status}`);
