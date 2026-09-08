@@ -780,6 +780,33 @@ async function handleSiteHeaderImageRequest({ req, res, pathname, env }) {
   return true;
 }
 
+async function handleAdminWorkImageGenerationRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env }) {
+  const match = pathname.match(/^\/api\/admin\/works\/(\d+)\/generate-image$/);
+  if (!match) return false;
+  if (req.method !== 'POST') { sendText(res, 405, 'Method not allowed'); return true; }
+  const context = await buildContext({ req }, { repo, jwtSecret, adminUserIds });
+  const user = context.currentUser;
+  if (!user || !(user.role === 'admin' || adminUserIds?.has(String(user.id)))) {
+    sendJson(res, user ? 403 : 401, { error: user ? 'Admin access required' : 'Authentication required' });
+    return true;
+  }
+  try {
+    const work = await repo.getWorkById(match[1]);
+    if (!work) { sendJson(res, 404, { error: 'Произведение не найдено' }); return true; }
+    if (String(work.imageUrl || '').trim()) {
+      sendJson(res, 409, { error: 'У произведения уже есть изображение', imageUrl: work.imageUrl });
+      return true;
+    }
+    const { buildWorkImagePrompt, generateImageWithCodexSale, saveGeneratedWorkImage } = await import('./workImageGeneration.mjs');
+    const image = await generateImageWithCodexSale({ prompt: buildWorkImagePrompt(work), env });
+    const saved = await saveGeneratedWorkImage({ workId: work.id, image, repo, env });
+    sendJson(res, saved.applied ? 201 : 409, { ok: saved.applied, imageUrl: saved.imageUrl, skipped: !saved.applied });
+  } catch (error) {
+    sendJson(res, 502, { error: error instanceof Error ? error.message : 'Не удалось сгенерировать изображение' });
+  }
+  return true;
+}
+
 async function handleWorkMediaUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env }) {
   if (pathname !== WORK_MEDIA_UPLOAD_ENDPOINT) {
     return false;
@@ -962,6 +989,10 @@ export function createHttpServer({ apolloServer, repo, jwtSecret, adminUserIds =
       }
 
       if (await handleForumTopicImageUploadRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env })) {
+        return;
+      }
+
+      if (await handleAdminWorkImageGenerationRequest({ req, res, pathname, repo, jwtSecret, adminUserIds, env })) {
         return;
       }
 
