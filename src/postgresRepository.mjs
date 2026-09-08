@@ -859,6 +859,7 @@ export function createPostgresRepository(pool) {
         `,
         [normalizedEmail],
       );
+      console.log(rows)
       return userFromRow(rows[0]);
     },
 
