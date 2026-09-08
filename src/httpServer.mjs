@@ -36,6 +36,7 @@ const WORK_MEDIA_PUBLIC_PATH_PREFIX = '/media/works/';
 const SITE_HEADER_IMAGE_UPLOAD_ENDPOINT = '/api/site/upload-header-image';
 const SITE_HEADER_PUBLIC_PATH_PREFIX = '/media/site/';
 const WORK_MEDIA_FILE_SIZE_LIMIT_BYTES = 25 * 1024 * 1024;
+const workImageGenerationInFlight = new Set();
 const IMAGE_FILE_SIZE_LIMIT_BYTES = 10 * 1024 * 1024;
 const AUDIO_EXTENSION_BY_MIME = {
   'audio/mpeg': '.mp3',
@@ -790,19 +791,33 @@ async function handleAdminWorkImageGenerationRequest({ req, res, pathname, repo,
     sendJson(res, user ? 403 : 401, { error: user ? 'Admin access required' : 'Authentication required' });
     return true;
   }
+  const workId = match[1];
   try {
-    const work = await repo.getWorkById(match[1]);
+    const work = await repo.getWorkById(workId);
     if (!work) { sendJson(res, 404, { error: 'Произведение не найдено' }); return true; }
     if (String(work.imageUrl || '').trim()) {
       sendJson(res, 409, { error: 'У произведения уже есть изображение', imageUrl: work.imageUrl });
       return true;
     }
-    const { buildWorkImagePrompt, generateImageWithCodexSale, saveGeneratedWorkImage } = await import('./workImageGeneration.mjs');
-    const image = await generateImageWithCodexSale({ prompt: buildWorkImagePrompt(work), env });
-    const saved = await saveGeneratedWorkImage({ workId: work.id, image, repo, env });
-    sendJson(res, saved.applied ? 201 : 409, { ok: saved.applied, imageUrl: saved.imageUrl, skipped: !saved.applied });
+    if (workImageGenerationInFlight.has(String(work.id))) {
+      sendJson(res, 202, { ok: true, pending: true, message: 'Генерация уже выполняется' });
+      return true;
+    }
+    workImageGenerationInFlight.add(String(work.id));
+    void (async () => {
+      try {
+        const { buildWorkImagePrompt, generateImageWithCodexSale, saveGeneratedWorkImage } = await import('./workImageGeneration.mjs');
+        const image = await generateImageWithCodexSale({ prompt: buildWorkImagePrompt(work), env });
+        await saveGeneratedWorkImage({ workId: work.id, image, repo, env });
+      } catch (error) {
+        console.error('Admin work image generation failed', { workId: work.id, error: error instanceof Error ? error.message : String(error) });
+      } finally {
+        workImageGenerationInFlight.delete(String(work.id));
+      }
+    })();
+    sendJson(res, 202, { ok: true, pending: true, message: 'Генерация запущена' });
   } catch (error) {
-    sendJson(res, 502, { error: error instanceof Error ? error.message : 'Не удалось сгенерировать изображение' });
+    sendJson(res, 500, { error: error instanceof Error ? error.message : 'Не удалось запустить генерацию' });
   }
   return true;
 }
