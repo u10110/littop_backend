@@ -539,6 +539,7 @@ const typeDefs = `#graphql
     adminTransferWorkGroup(sourceAuthorId: ID!, destinationAuthorId: ID!, sourceGroupId: ID!, destinationGroupId: ID, mode: WorkGroupTransferMode!, conflictPolicy: WorkGroupConflictPolicy!): AdminWorkGroupTransferResult!
     createMyWorkGroup(input: AuthorWorkGroupInput!): AuthorWorkGroup!
     updateMyWorkGroup(groupId: ID!, input: AuthorWorkGroupInput!): AuthorWorkGroup!
+    deleteMyWorkGroup(groupId: ID!): Boolean!
     reorderMyWorkGroups(groupIds: [ID!]!): [AuthorWorkGroup!]!
     setMyWorkGroupItems(groupId: ID!, workIds: [ID!]!): AuthorWorkGroup!
     setMyWorkGroupCollapsed(groupId: ID!, isCollapsed: Boolean!): AuthorWorkGroup!
@@ -1048,6 +1049,7 @@ const resolvers = {
     adminReassignWorkGroupOwner: async (_, { groupId, destinationAuthorId }, { currentUser, repo, adminUserIds }) => { const user = requireAuth(currentUser); if (!isAdminUser(user, adminUserIds)) throw new GraphQLError('Only admin can reassign work group ownership', { extensions: { code: 'FORBIDDEN' } }); return repo.adminReassignWorkGroupOwner({ groupId, destinationAuthorId }); },
     createMyWorkGroup: async (_, { input }, { currentUser, repo }) => repo.createMyWorkGroup({ authorUserId: requireAuth(currentUser).id, ...input }),
     updateMyWorkGroup: async (_, { groupId, input }, { currentUser, repo }) => repo.updateMyWorkGroup({ authorUserId: requireAuth(currentUser).id, groupId, ...input }),
+    deleteMyWorkGroup: async (_, { groupId }, { currentUser, repo }) => repo.deleteMyWorkGroup({ authorUserId: requireAuth(currentUser).id, groupId }),
     reorderMyWorkGroups: async (_, { groupIds }, { currentUser, repo }) => repo.reorderMyWorkGroups({ authorUserId: requireAuth(currentUser).id, groupIds }),
     setMyWorkGroupItems: async (_, { groupId, workIds }, { currentUser, repo }) => repo.setMyWorkGroupItems({ authorUserId: requireAuth(currentUser).id, groupId, workIds }),
     setMyWorkGroupCollapsed: async (_, { groupId, isCollapsed }, { currentUser, repo }) => repo.setMyWorkGroupCollapsed({ authorUserId: requireAuth(currentUser).id, groupId, isCollapsed }),

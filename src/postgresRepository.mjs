@@ -2274,6 +2274,27 @@ export function createPostgresRepository(pool) {
       };
     },
 
+    async deleteMyWorkGroup({ authorUserId, groupId }) {
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        const group = await client.query(
+          'select id from work_collections where id = $1 and author_user_id = $2 for update',
+          [groupId, authorUserId],
+        );
+        if (!group.rows.length) throw new Error('Work group not found');
+        await client.query('delete from work_collection_items where collection_id = $1', [groupId]);
+        await client.query('delete from work_collections where id = $1 and author_user_id = $2', [groupId, authorUserId]);
+        await client.query('commit');
+        return true;
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
     async reorderMyWorkGroups({ authorUserId, groupIds }) {
       const client = await pool.connect();
       try {
