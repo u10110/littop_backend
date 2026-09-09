@@ -394,6 +394,8 @@ const typeDefs = `#graphql
     pdfFileName: String
     audioUrl: String
     audioFileName: String
+    imageUrl: String
+    removeImage: Boolean = false
   }
 
   type AuthorWorkGroup {

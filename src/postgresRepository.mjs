@@ -2613,7 +2613,7 @@ export function createPostgresRepository(pool) {
       } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
     },
 
-    async updateWork({ workId, authorUserId, canManageAll = false, sectionCode, genreSlug = null, title, summary = null, body = null, excerpt = null, status = 'published', projectFormat = null, pdfUrl = null, pdfFileName = null, audioUrl = null, audioFileName = null }) {
+    async updateWork({ workId, authorUserId, canManageAll = false, sectionCode, genreSlug = null, title, summary = null, body = null, excerpt = null, status = 'published', projectFormat = null, pdfUrl = null, pdfFileName = null, audioUrl = null, audioFileName = null, imageUrl = undefined, removeImage = false }) {
       const normalizedTitle = String(title ?? '').trim();
       if (!normalizedTitle) {
         throw new Error('title is required');
@@ -2666,8 +2666,9 @@ export function createPostgresRepository(pool) {
               pdf_file_name = $11,
               audio_url = $12,
               audio_file_name = $13,
+              image_url = case when $14::boolean then null when $15::boolean then $16 else image_url end,
               updated_at = now()
-          where id = $14 and ($15::boolean = true or author_user_id = $16)
+          where id = $17 and ($18::boolean = true or author_user_id = $19)
           `,
           [
             section.rows[0].id,
@@ -2683,6 +2684,9 @@ export function createPostgresRepository(pool) {
             normalizeOptionalText(pdfFileName),
             normalizeOptionalText(audioUrl),
             normalizeOptionalText(audioFileName),
+            Boolean(removeImage),
+            imageUrl === undefined ? false : true,
+            imageUrl === undefined ? null : normalizeOptionalText(imageUrl),
             workId,
             canManageAll,
             authorUserId,
