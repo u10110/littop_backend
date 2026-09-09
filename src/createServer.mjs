@@ -484,7 +484,7 @@ const typeDefs = `#graphql
     todayVisitors(limit: Int = 12): [Author!]!
     birthdayAuthors(limit: Int = 12): [Author!]!
     author(id: ID, login: String): Author
-    works(limit: Int = 20, offset: Int = 0, sectionCode: String, genreSlug: String, authorId: ID, search: String, status: String = "published", createdToday: Boolean): [Work!]!
+    works(limit: Int = 20, offset: Int = 0, sectionCode: String, genreSlug: String, authorId: ID, search: String, status: String = "published", createdToday: Boolean, sort: String = "POPULARITY"): [Work!]!
     myWorkGroups: [AuthorWorkGroup!]!
     authorWorkGroups(authorId: ID!): [AuthorWorkGroup!]!
     workGenres(sectionCode: String): [WorkGenre!]!

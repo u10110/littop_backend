@@ -1904,6 +1904,12 @@ export function createPostgresRepository(pool) {
         conditions.push(`ws.code = $${params.length}`);
       }
       const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
+      const sortMode = String(sort || 'POPULARITY').toUpperCase();
+      const orderBy = sortMode === 'TITLE_ASC'
+        ? 'w.title asc, w.id asc'
+        : sortMode === 'TITLE_DESC'
+          ? 'w.title desc, w.id desc'
+          : 'coalesce((select count(*) from work_likes wl2 where wl2.work_id = w.id), 0) desc, coalesce(w.published_at, w.created_at) desc, w.id desc';
       const { rows } = await pool.query(
         `
         select wg.slug, wg.name, ws.code as section_code
@@ -2298,7 +2304,7 @@ export function createPostgresRepository(pool) {
       return (await this.listMyWorkGroups({ authorUserId })).find((item) => String(item.id) === String(groupId));
     },
 
-    async listWorks({ limit = 20, offset = 0, sectionCode = null, genreSlug = null, authorId = null, search = null, status = 'published', createdToday = false } = {}) {
+    async listWorks({ limit = 20, offset = 0, sectionCode = null, genreSlug = null, authorId = null, search = null, status = 'published', createdToday = false, sort = 'POPULARITY' } = {}) {
       const page = buildLimitOffset(limit, offset);
       const conditions = [];
       const params = [];
@@ -2327,6 +2333,12 @@ export function createPostgresRepository(pool) {
       }
       params.push(page.limit, page.offset);
       const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
+      const sortMode = String(sort || 'POPULARITY').toUpperCase();
+      const orderBy = sortMode === 'TITLE_ASC'
+        ? 'w.title asc, w.id asc'
+        : sortMode === 'TITLE_DESC'
+          ? 'w.title desc, w.id desc'
+          : 'coalesce((select count(*) from work_likes wl2 where wl2.work_id = w.id), 0) desc, coalesce(w.published_at, w.created_at) desc, w.id desc';
       const { rows } = await pool.query(
         `
         select w.*, ws.code as section_code, wg.slug as genre_slug,
@@ -2345,7 +2357,7 @@ export function createPostgresRepository(pool) {
         join users u on u.id = w.author_user_id
         left join author_profiles ap on ap.user_id = u.id
         ${where}
-        order by coalesce(w.published_at, w.created_at) desc
+        order by ${orderBy}
         limit $${params.length - 1} offset $${params.length}
         `,
         params,
