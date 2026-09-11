@@ -10,15 +10,10 @@ import { Client } from 'pg';
 const args = new Set(process.argv.slice(2));
 const dryRun = args.has('--dry-run');
 const baseline = args.has('--baseline');
-const includeSeed = args.has('--include-seed');
-const unknownArgs = [...args].filter((arg) => !['--dry-run', '--baseline', '--include-seed'].includes(arg));
+const unknownArgs = [...args].filter((arg) => !['--dry-run', '--baseline'].includes(arg));
 
 if (unknownArgs.length) {
   console.error(`Unknown option(s): ${unknownArgs.join(', ')}`);
-  process.exit(2);
-}
-if (baseline && includeSeed) {
-  console.error('--baseline and --include-seed cannot be used together.');
   process.exit(2);
 }
 
@@ -32,7 +27,6 @@ const migrationsDir = resolve(process.cwd(), 'migrations');
 const files = (await readdir(migrationsDir, { withFileTypes: true }))
   .filter((entry) => entry.isFile() && /^\d+_.+\.sql$/i.test(entry.name))
   .map((entry) => entry.name)
-  .filter((name) => includeSeed || !/^002_mockup_seed\.sql$/i.test(name))
   .sort((left, right) => {
     const leftNumber = Number(left.match(/^\d+/)?.[0] || 0);
     const rightNumber = Number(right.match(/^\d+/)?.[0] || 0);

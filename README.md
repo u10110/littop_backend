@@ -49,7 +49,7 @@ For an already populated database which predates migration tracking, run this on
 npm run db:migrate -- --baseline
 ```
 
-`--baseline` records the current migration files without executing SQL. To include the mockup seed deliberately, use `npm run db:migrate -- --include-seed`.
+`--baseline` records the current migration files without executing SQL.
 
 ## Environment
 

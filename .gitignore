@@ -2,3 +2,7 @@
 /.idea/
 /node_modules/
 /node_modules/
+
+/uploads/
+/logs/
+probe_codex_image.mjs
