@@ -114,6 +114,7 @@ function workFromRow(row) {
     id: row.id,
     title: row.title,
     imageUrl: row.image_url ?? null,
+    imagePreviewUrl: row.image_preview_url ?? null,
     slug: row.slug,
     summary: row.summary,
     body: row.body,
@@ -2414,16 +2415,15 @@ export function createPostgresRepository(pool) {
       return rows.map(workFromRow);
     },
 
-    async setGeneratedWorkImage({ workId, imageUrl }) {
+    async setGeneratedWorkImage({ workId, imageUrl, imagePreviewUrl = null }) {
       const { rows } = await pool.query(
-        `update works set image_url = $1, updated_at = now()
-          where id = $2 and coalesce(nullif(btrim(image_url), ''), '') = ''
-          returning id, image_url`,
-        [imageUrl, workId],
+        `update works set image_url = $1, image_preview_url = $2, updated_at = now()
+          where id = $3 and coalesce(nullif(btrim(image_url), ''), '') = ''
+          returning id, image_url, image_preview_url`,
+        [imageUrl, imagePreviewUrl, workId],
       );
       return rows.length > 0;
     },
-
     async getWorkById(id) {
       const { rows } = await pool.query(
         `

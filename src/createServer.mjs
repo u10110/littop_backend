@@ -109,6 +109,7 @@ const typeDefs = `#graphql
     audioUrl: String
     audioFileName: String
     imageUrl: String
+    imagePreviewUrl: String
     commentsCount: Int!
     ratingsCount: Int!
     averageRating: Float!

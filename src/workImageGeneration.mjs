@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { extname, join } from 'node:path';
+import sharp from 'sharp';
 
 import { uploadFile, resolveWorkMediaStorageDir } from './httpServer.mjs';
 
@@ -70,10 +71,14 @@ export async function generateImageWithCodexSale({ prompt, env, fetchImpl = glob
 
 export async function saveGeneratedWorkImage({ workId, image, repo, env }) {
   const fileName = `work-ai-${workId}-${Date.now()}-${randomUUID()}${image.extension || imageExtension(image.mimeType)}`;
+  const previewFileName = `work-preview-${workId}-${Date.now()}-${randomUUID()}.webp`;
   const storagePath = `/media/works/${fileName}`;
+  const previewStoragePath = `/media/works/${previewFileName}`;
+  const previewBytes = await sharp(image.bytes).resize({ width: 320, withoutEnlargement: true }).webp({ quality: 78 }).toBuffer();
   await uploadFile(storagePath, image.bytes, image.mimeType, { env, localPath: join(resolveWorkMediaStorageDir(env), fileName) });
-  const applied = await repo.setGeneratedWorkImage({ workId, imageUrl: storagePath });
-  return { applied, imageUrl: storagePath };
+  await uploadFile(previewStoragePath, previewBytes, 'image/webp', { env, localPath: join(resolveWorkMediaStorageDir(env), previewFileName) });
+  const applied = await repo.setGeneratedWorkImage({ workId, imageUrl: storagePath, imagePreviewUrl: previewStoragePath });
+  return { applied, imageUrl: storagePath, imagePreviewUrl: previewStoragePath };
 }
 
 export async function generateMissingWorkImages({ works, dryRun = false, generateImage, saveGeneratedImage, onResult = () => {} }) {
