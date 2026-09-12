@@ -30,7 +30,6 @@ try {
   const params = [];
   const conditions = ["coalesce(nullif(btrim(w.image_url), ''), '') = ''"];
   if (workId) { params.push(workId); conditions.push(`w.id = $${params.length}`); }
-  if (workId) { params.push(workId); conditions.push(`w.id = $${params.length}`); }
   if (status) { params.push(status); conditions.push(`w.status = $${params.length}`); }
   else conditions.push("w.status <> 'archived'");
   params.push(limit);
@@ -65,12 +64,12 @@ try {
         workId: work.id,
         image,
         repo: {
-          setGeneratedWorkImage: async ({ workId, imageUrl }) => {
+          setGeneratedWorkImage: async ({ workId, imageUrl, imagePreviewUrl = null }) => {
             const update = await pool.query(
-              `update works set image_url = $1, updated_at = now()
-                where id = $2 and coalesce(nullif(btrim(image_url), ''), '') = ''
-                returning id`,
-              [imageUrl, workId],
+              `update works set image_url = $1, image_preview_url = $2, updated_at = now()
+                where id = $3 and coalesce(nullif(btrim(image_url), ''), '') = ''
+                returning id, image_url, image_preview_url`,
+              [imageUrl, imagePreviewUrl, workId],
             );
             return update.rowCount === 1;
           },
