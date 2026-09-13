@@ -120,6 +120,7 @@ const typeDefs = `#graphql
     dislikedByMe: Boolean!
     announcementActive: Boolean!
     announcementCount: Int!
+    radioRecommended: Boolean!
     publishedAt: String
     createdAt: String!
     updatedAt: String!
@@ -514,6 +515,7 @@ const typeDefs = `#graphql
     myGrantedPeaches(limit: Int = 100): [PeachTransaction!]!
     contests(status: String, scope: String, limit: Int = 20, offset: Int = 0): [Contest!]!
     radioTracks(limit: Int = 20, offset: Int = 0): [RadioTrack!]!
+    radioRecommendedWorks(limit: Int = 20, offset: Int = 0): [Work!]!
     radioTracksByCreator(creatorUserId: ID!): [RadioTrack!]!
     siteSettings: [SiteSetting!]!
   }
@@ -552,6 +554,7 @@ const typeDefs = `#graphql
     adminDeleteForumTopic(topicId: ID!): ForumTopic!
     adminDeleteForumPost(postId: ID!): ForumPost!
     adminDeactivateWorkAnnouncement(workId: ID!): Work!
+    recommendWorkAudioForRadio(workId: ID!): Work!
     updateRadioTrack(input: RadioTrackUpdateInput!): RadioTrack!
     deleteRadioTrack(id: ID!): RadioTrack!
     updateSiteSetting(key: String!, value: String!): SiteSetting!
@@ -771,6 +774,7 @@ const resolvers = {
     },
     contests: async (_, args, { repo }) => repo.listContests(args),
     radioTracks: async (_, args, { repo }) => repo.listRadioTracks(args),
+    radioRecommendedWorks: async (_, args, { repo }) => repo.listWorks({...args, radioRecommended: true, status: 'published'}),
     radioTracksByCreator: async (_, { creatorUserId }, { repo }) => repo.listRadioTracksByCreator({ creatorUserId }),
     siteSettings: async (_, __, { repo }) => repo.listSiteSettings(),
   },
@@ -1090,6 +1094,10 @@ const resolvers = {
       const user = requireAuth(currentUser);
       if (!isAdminUser(user, adminUserIds)) throw new GraphQLError('Only admin can remove announcements', { extensions: { code: 'FORBIDDEN' } });
       return repo.adminDeactivateWorkAnnouncement({ workId, actorUserId: user.id });
+    },
+    recommendWorkAudioForRadio: async (_, { workId }, { currentUser, repo, adminUserIds }) => {
+      const user = requireAuth(currentUser);
+      return repo.recommendWorkAudioForRadio({workId, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds)});
     },
     updateWork: async (_, { workId, input }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);

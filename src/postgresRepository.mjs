@@ -134,6 +134,7 @@ function workFromRow(row) {
     dislikesCount: Number(row.dislikes_count ?? 0),
     announcementActive: Boolean(row.announcement_active),
     announcementCount: Number(row.announcement_count ?? 0),
+    radioRecommended: Boolean(row.radio_recommended),
     publishedAt: row.published_at?.toISOString?.() ?? row.published_at,
     createdAt: row.created_at?.toISOString?.() ?? row.created_at,
     updatedAt: row.updated_at?.toISOString?.() ?? row.updated_at,
@@ -2320,7 +2321,7 @@ export function createPostgresRepository(pool) {
       return (await this.listMyWorkGroups({ authorUserId })).find((item) => String(item.id) === String(groupId));
     },
 
-    async listWorks({ limit = 20, offset = 0, sectionCode = null, genreSlug = null, authorId = null, search = null, status = 'published', createdToday = false, sort = 'POPULARITY' } = {}) {
+    async listWorks({ limit = 20, offset = 0, sectionCode = null, genreSlug = null, authorId = null, search = null, status = 'published', createdToday = false, radioRecommended = false, sort = 'POPULARITY' } = {}) {
       const page = buildLimitOffset(limit, offset);
       const conditions = [];
       const params = [];
@@ -2346,6 +2347,9 @@ export function createPostgresRepository(pool) {
       }
       if (createdToday) {
         conditions.push(`date(w.created_at) = current_date`);
+      }
+      if (radioRecommended) {
+        conditions.push(`w.radio_recommended = true and w.audio_url is not null`);
       }
       params.push(page.limit, page.offset);
       const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
@@ -2638,6 +2642,16 @@ export function createPostgresRepository(pool) {
         await client.query('commit');
         return { groupId: targetId, sourceAuthorId, destinationAuthorId, mode, conflictPolicy, transferredWorksCount, skippedWorksCount };
       } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
+    },
+
+    async recommendWorkAudioForRadio({ workId, authorUserId, canManageAll = false }) {
+      const { rows } = await pool.query("select id, author_user_id, audio_url from works where id = $1 and status <> 'archived' limit 1", [workId]);
+      const work = rows[0];
+      if (!work) throw new Error('Work not found');
+      if (!canManageAll && String(work.author_user_id) !== String(authorUserId)) throw new Error('Only the owner can recommend this work for radio.');
+      if (!String(work.audio_url || '').trim()) throw new Error('Аудиоверсия произведения не добавлена.');
+      await pool.query('update works set radio_recommended = true, updated_at = now() where id = $1', [workId]);
+      return this.getWorkById(workId);
     },
 
     async updateWork({ workId, authorUserId, canManageAll = false, sectionCode, genreSlug = null, title, summary = null, body = null, excerpt = null, status = 'published', projectFormat = null, pdfUrl = null, pdfFileName = null, audioUrl = null, audioFileName = null, imageUrl = undefined, removeImage = false }) {
