@@ -174,3 +174,51 @@ test('password reset flow sends email link and allows setting a new password', a
 
   await server.stop();
 });
+
+
+test('password reset returns an error when mail delivery fails', async () => {
+  const repo = makeFakeRepo();
+  const passwordHash = await hashPassword('old-password-123');
+  await repo.createUser({email: 'delivery-failure@example.com', passwordHash, displayName: 'Delivery Failure'});
+  const server = createApolloServer({
+    repo,
+    jwtSecret: 'test-secret',
+    frontendBaseUrl: 'https://frontend.example.com',
+    mailer: {
+      enabled: true,
+      async sendPasswordResetEmail() {
+        throw new Error('SMTP connection refused');
+      },
+    },
+  });
+  await server.start();
+  const result = await server.executeOperation({
+    query: 'mutation($email: String!) { requestPasswordReset(email: $email) }',
+    variables: {email: 'delivery-failure@example.com'},
+  }, {contextValue: {repo, jwtSecret: 'test-secret', currentUser: null, authHeader: ''}});
+  assert.equal(result.body.kind, 'single');
+  assert.equal(result.body.singleResult.data?.requestPasswordReset, undefined);
+  assert.match(result.body.singleResult.errors?.[0]?.message || '', /SMTP connection refused/);
+  await server.stop();
+});
+
+test('password reset does not claim delivery when mailer is disabled', async () => {
+  const repo = makeFakeRepo();
+  const passwordHash = await hashPassword('old-password-123');
+  await repo.createUser({email: 'disabled-mailer@example.com', passwordHash, displayName: 'Disabled Mailer'});
+  const server = createApolloServer({
+    repo,
+    jwtSecret: 'test-secret',
+    frontendBaseUrl: 'https://frontend.example.com',
+    mailer: {enabled: false},
+  });
+  await server.start();
+  const result = await server.executeOperation({
+    query: 'mutation($email: String!) { requestPasswordReset(email: $email) }',
+    variables: {email: 'disabled-mailer@example.com'},
+  }, {contextValue: {repo, jwtSecret: 'test-secret', currentUser: null, authHeader: ''}});
+  assert.equal(result.body.kind, 'single');
+  assert.equal(result.body.singleResult.data?.requestPasswordReset, undefined);
+  assert.match(result.body.singleResult.errors?.[0]?.message || '', /почтов|mailer|отправ/i);
+  await server.stop();
+});

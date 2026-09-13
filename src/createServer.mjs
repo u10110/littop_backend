@@ -822,7 +822,6 @@ const resolvers = {
       return { token, user };
     },
     requestPasswordReset: async (_, { email }, { repo, jwtSecret }) => {
-      console.log(_)
       const normalizedEmail = String(email || '').trim().toLowerCase();
       if (!normalizedEmail) {
         throw new GraphQLError('Email is required', {
@@ -832,7 +831,7 @@ const resolvers = {
 
       const user = await findUserByEmailForReset(repo, normalizedEmail);
       if (!user) {
-        console.info('Password reset: user not found')
+        console.info('Password reset: user not found');
         return true;
       }
 
@@ -840,13 +839,17 @@ const resolvers = {
       const resetToken = issuePasswordResetToken(user, jwtSecret);
       const resetUrl = buildPasswordResetUrl(frontendBaseUrl, resetToken);
 
-      if (mailer?.enabled && typeof mailer.sendPasswordResetEmail === 'function') {
-        await mailer.sendPasswordResetEmail({
-          to: user.email,
-          displayName: user.profile?.displayName || user.login,
-          resetUrl,
+      if (!mailer?.enabled || typeof mailer.sendPasswordResetEmail !== 'function') {
+        throw new GraphQLError('Почтовая отправка не настроена на сервере.', {
+          extensions: { code: 'SERVICE_UNAVAILABLE' },
         });
       }
+
+      await mailer.sendPasswordResetEmail({
+        to: user.email,
+        displayName: user.profile?.displayName || user.login,
+        resetUrl,
+      });
 
       return true;
     },
