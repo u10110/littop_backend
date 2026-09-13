@@ -1109,8 +1109,10 @@ const resolvers = {
     },
     activateWorkAnnouncement: async (_, { workId }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
-      const isAdmin = isAdminUser(user, adminUserIds);
-      return repo.activateWorkAnnouncement({ workId, activatedByUserId: user.id, isAdmin });
+      if (!isAdminUser(user, adminUserIds)) {
+        throw new GraphQLError('Admin only', { extensions: { code: 'FORBIDDEN' } });
+      }
+      return repo.activateWorkAnnouncement({ workId, activatedByUserId: user.id, isAdmin: true });
     },
     deactivateWorkAnnouncement: async (_, { workId }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
