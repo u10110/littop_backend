@@ -85,6 +85,7 @@ const typeDefs = `#graphql
     canReceivePrivateMessages: Boolean
     isFeatured: Boolean!
     isChild: Boolean
+    canManageAsManagedAccount: Boolean!
     registeredAt: String!
     lastSeenAt: String
     deletedAt: String
@@ -991,10 +992,12 @@ const resolvers = {
       if (!isAdminUser(user, adminUserIds)) {
         throw new GraphQLError('Only admin can switch into managed accounts', { extensions: { code: 'FORBIDDEN' } });
       }
-      const allowed = await repo.getManagedAuthorAccount({ managedUserId });
+      const managedAccount = await repo.getManagedAuthorAccount({ managedUserId });
+      const targetAuthor = await repo.getAuthorByUserId(managedUserId);
       const managedUser = await repo.getUserById(managedUserId);
-      if (!allowed || !managedUser) {
-        throw new GraphQLError('Managed account not found', { extensions: { code: 'NOT_FOUND' } });
+      const canSwitch = Boolean(managedAccount || targetAuthor?.isClassic);
+      if (!canSwitch || !managedUser) {
+        throw new GraphQLError('Managed or classic author account not found', { extensions: { code: 'NOT_FOUND' } });
       }
       return { token: issueToken(managedUser, jwtSecret), user: managedUser };
     },
@@ -1262,6 +1265,11 @@ const resolvers = {
     isOnline: (parent) => resolveOnlineFlag(parent),
     isMemorialPage: (parent) => Boolean(parent?.isMemorialPage),
     isChild: (parent) => Boolean(parent?.isChild),
+    canManageAsManagedAccount: async (parent, _, { currentUser, adminUserIds, repo }) => {
+      if (!isAdminUser(currentUser, adminUserIds) || !parent?.id) return false;
+      if (parent?.isClassic) return true;
+      return Boolean(await repo.getManagedAuthorAccount({ managedUserId: parent.id }));
+    },
     coverImagePositionX: async (parent, _, { repo }) => parent?.coverImagePositionX ?? (await repo.getAuthor({ id: parent.id }))?.coverImagePositionX ?? 50,
     coverImagePositionY: async (parent, _, { repo }) => parent?.coverImagePositionY ?? (await repo.getAuthor({ id: parent.id }))?.coverImagePositionY ?? 50,
     coverImageScale: async (parent, _, { repo }) => parent?.coverImageScale ?? (await repo.getAuthor({ id: parent.id }))?.coverImageScale ?? 1,
