@@ -1798,7 +1798,7 @@ export function createPostgresRepository(pool) {
 
     async listWorkReaders({ workId, limit = 100 }) {
       const page = buildLimitOffset(limit, 0);
-      const batchSize = 200;
+      const batchSize = 0;
       const { rows: statsRows } = await pool.query(
         `
         select count(*)::int as total_views
@@ -1808,10 +1808,7 @@ export function createPostgresRepository(pool) {
         [workId],
       );
       const totalViews = Number(statsRows[0]?.total_views ?? 0);
-      const lockedViews = Math.floor(totalViews / batchSize) * batchSize;
-      if (!lockedViews) {
-        return { totalViews, lockedViews, batchSize, viewers: [] };
-      }
+      const lockedViews = totalViews;
       const { rows } = await pool.query(
         `
         with ordered_events as (
@@ -1823,7 +1820,6 @@ export function createPostgresRepository(pool) {
         locked_events as (
           select *
           from ordered_events
-          where seq <= $2
         ),
         latest as (
           select distinct on (viewer_user_id) *
@@ -1844,9 +1840,9 @@ export function createPostgresRepository(pool) {
         where coalesce(ap.is_classic, false) = false
           and coalesce(ap.is_memorial_page, false) = false
         order by latest.viewed_at desc, latest.id desc
-        limit $3
+        limit $2
         `,
-        [workId, lockedViews, page.limit],
+        [workId, page.limit],
       );
       return { totalViews, lockedViews, batchSize, viewers: rows.map(workViewerFromRow) };
     },
