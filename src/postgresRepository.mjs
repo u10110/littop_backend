@@ -2354,7 +2354,7 @@ export function createPostgresRepository(pool) {
         ? 'w.title asc, w.id asc'
         : sortMode === 'TITLE_DESC'
           ? 'w.title desc, w.id desc'
-          : 'coalesce((select count(*) from work_likes wl2 where wl2.work_id = w.id), 0) desc, coalesce(w.published_at, w.created_at) desc, w.id desc';
+          : 'coalesce(w.published_at, w.created_at) desc, w.id desc';
       const { rows } = await pool.query(
         `
         select w.*, ws.code as section_code, wg.slug as genre_slug,
