@@ -110,6 +110,8 @@ function authorFromRow(row) {
 
 function workFromRow(row) {
   if (!row) return null;
+  const storedAudioTracks = normalizeAudioTracks(row.audio_tracks);
+  const legacyAudioTrack = normalizeLegacyAudioTrack(row.audio_url, row.audio_file_name);
   return {
     id: row.id,
     title: row.title,
@@ -127,6 +129,7 @@ function workFromRow(row) {
     pdfFileName: row.pdf_file_name ?? null,
     audioUrl: row.audio_url ?? null,
     audioFileName: row.audio_file_name ?? null,
+    audioTracks: storedAudioTracks.length ? storedAudioTracks : (legacyAudioTrack ? [legacyAudioTrack] : []),
     commentsCount: Number(row.comments_count ?? 0),
     ratingsCount: Number(row.ratings_count ?? 0),
     averageRating: Number(row.average_rating ?? 0),
@@ -457,6 +460,20 @@ function normalizeOptionalText(value) {
   if (typeof value !== 'string') return null;
   const normalized = value.trim();
   return normalized || null;
+}
+
+function normalizeAudioTracks(value) {
+  if (!Array.isArray(value)) return [];
+  return value.reduce((tracks, track) => {
+    const url = normalizeOptionalText(track?.url);
+    if (url) tracks.push({ url, fileName: normalizeOptionalText(track?.fileName) });
+    return tracks;
+  }, []);
+}
+
+function normalizeLegacyAudioTrack(audioUrl, audioFileName) {
+  const url = normalizeOptionalText(audioUrl);
+  return url ? { url, fileName: normalizeOptionalText(audioFileName) } : null;
 }
 
 function normalizeOptionalDate(value) {
@@ -2481,7 +2498,7 @@ export function createPostgresRepository(pool) {
       return workFromRow(rows[0]);
     },
 
-    async createWork({ authorUserId, sectionCode, genreSlug = null, title, summary = null, body = null, excerpt = null, status = 'published', projectFormat = null, pdfUrl = null, pdfFileName = null, audioUrl = null, audioFileName = null }) {
+    async createWork({ authorUserId, sectionCode, genreSlug = null, title, summary = null, body = null, excerpt = null, status = 'published', projectFormat = null, pdfUrl = null, pdfFileName = null, audioUrl = null, audioFileName = null, audioTracks = null }) {
       const client = await pool.connect();
       try {
         await client.query('begin');
@@ -2499,9 +2516,9 @@ export function createPostgresRepository(pool) {
           `
           insert into works (
             author_user_id, section_id, genre_id, title, slug, summary, body, excerpt, status, project_format,
-            published_at, pdf_url, pdf_file_name, audio_url, audio_file_name
+            published_at, pdf_url, pdf_file_name, audio_url, audio_file_name, audio_tracks
           )
-          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb)
           returning id
           `,
           [
@@ -2520,6 +2537,7 @@ export function createPostgresRepository(pool) {
             normalizeOptionalText(pdfFileName),
             normalizeOptionalText(audioUrl),
             normalizeOptionalText(audioFileName),
+            JSON.stringify(normalizeAudioTracks(audioTracks)),
           ],
         );
         await client.query(
@@ -2654,7 +2672,7 @@ export function createPostgresRepository(pool) {
       return this.getWorkById(workId);
     },
 
-    async updateWork({ workId, authorUserId, canManageAll = false, sectionCode, genreSlug = null, title, summary = null, body = null, excerpt = null, status = 'published', projectFormat = null, pdfUrl = null, pdfFileName = null, audioUrl = null, audioFileName = null, imageUrl = undefined, removeImage = false }) {
+    async updateWork({ workId, authorUserId, canManageAll = false, sectionCode, genreSlug = null, title, summary = null, body = null, excerpt = null, status = 'published', projectFormat = null, pdfUrl = null, pdfFileName = null, audioUrl = null, audioFileName = null, audioTracks = undefined, imageUrl = undefined, removeImage = false }) {
       const normalizedTitle = String(title ?? '').trim();
       if (!normalizedTitle) {
         throw new Error('title is required');
@@ -2707,9 +2725,10 @@ export function createPostgresRepository(pool) {
               pdf_file_name = $11,
               audio_url = $12,
               audio_file_name = $13,
-              image_url = case when $14::boolean then null when $15::boolean then $16 else image_url end,
+              audio_tracks = case when $14::boolean then $15::jsonb else audio_tracks end,
+              image_url = case when $16::boolean then null when $17::boolean then $18 else image_url end,
               updated_at = now()
-          where id = $17 and ($18::boolean = true or author_user_id = $19)
+          where id = $19 and ($20::boolean = true or author_user_id = $21)
           `,
           [
             section.rows[0].id,
@@ -2725,6 +2744,8 @@ export function createPostgresRepository(pool) {
             normalizeOptionalText(pdfFileName),
             normalizeOptionalText(audioUrl),
             normalizeOptionalText(audioFileName),
+            audioTracks !== undefined,
+            JSON.stringify(normalizeAudioTracks(audioTracks)),
             Boolean(removeImage),
             imageUrl === undefined ? false : true,
             imageUrl === undefined ? null : normalizeOptionalText(imageUrl),
