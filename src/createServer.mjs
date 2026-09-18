@@ -109,6 +109,7 @@ const typeDefs = `#graphql
     pdfFileName: String
     audioUrl: String
     audioFileName: String
+    audioTracks: [WorkAudioTrack!]!
     imageUrl: String
     imagePreviewUrl: String
     commentsCount: Int!
@@ -125,6 +126,11 @@ const typeDefs = `#graphql
     createdAt: String!
     updatedAt: String!
     author: Author!
+  }
+
+  type WorkAudioTrack {
+    url: String!
+    fileName: String
   }
 
   type WorkGenre {
@@ -382,6 +388,12 @@ const typeDefs = `#graphql
     pdfFileName: String
     audioUrl: String
     audioFileName: String
+    audioTracks: [WorkAudioTrackInput!]
+  }
+
+  input WorkAudioTrackInput {
+    url: String!
+    fileName: String
   }
 
   input UpdateWorkInput {
@@ -397,6 +409,7 @@ const typeDefs = `#graphql
     pdfFileName: String
     audioUrl: String
     audioFileName: String
+    audioTracks: [WorkAudioTrackInput!]
     imageUrl: String
     removeImage: Boolean = false
   }
