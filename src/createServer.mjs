@@ -82,6 +82,7 @@ const typeDefs = `#graphql
     worksCountCached: Int!
     isClassic: Boolean!
     isMemorialPage: Boolean!
+    isManagedAccount: Boolean!
     canReceivePrivateMessages: Boolean
     isFeatured: Boolean!
     isChild: Boolean
@@ -1292,6 +1293,11 @@ const resolvers = {
   Author: {
     isOnline: (parent) => resolveOnlineFlag(parent),
     isMemorialPage: (parent) => Boolean(parent?.isMemorialPage),
+    isManagedAccount: async (parent, _, { repo }) => {
+      if (!parent?.id) return false;
+      if (parent?.isClassic) return true;
+      return Boolean(await repo.getManagedAuthorAccount({ managedUserId: parent.id }));
+    },
     isChild: (parent) => Boolean(parent?.isChild),
     canManageAsManagedAccount: async (parent, _, { currentUser, adminUserIds, repo }) => {
       if (!isAdminUser(currentUser, adminUserIds) || !parent?.id) return false;
