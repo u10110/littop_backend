@@ -466,14 +466,19 @@ function normalizeAudioTracks(value) {
   if (!Array.isArray(value)) return [];
   return value.reduce((tracks, track) => {
     const url = normalizeOptionalText(track?.url);
-    if (url) tracks.push({ url, fileName: normalizeOptionalText(track?.fileName) });
+    if (!url) return tracks;
+    const fileName = normalizeOptionalText(track?.fileName);
+    const title = normalizeOptionalText(track?.title) || fileName || 'Аудиоверсия';
+    tracks.push({ url, title, ...(fileName ? { fileName } : {}) });
     return tracks;
   }, []);
 }
 
 function normalizeLegacyAudioTrack(audioUrl, audioFileName) {
   const url = normalizeOptionalText(audioUrl);
-  return url ? { url, fileName: normalizeOptionalText(audioFileName) } : null;
+  if (!url) return null;
+  const fileName = normalizeOptionalText(audioFileName);
+  return { url, title: fileName || 'Аудиоверсия', ...(fileName ? { fileName } : {}) };
 }
 
 function normalizeOptionalDate(value) {

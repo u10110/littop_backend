@@ -130,6 +130,7 @@ const typeDefs = `#graphql
 
   type WorkAudioTrack {
     url: String!
+    title: String!
     fileName: String
   }
 
@@ -393,6 +394,7 @@ const typeDefs = `#graphql
 
   input WorkAudioTrackInput {
     url: String!
+    title: String
     fileName: String
   }
 
