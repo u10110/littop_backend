@@ -2362,6 +2362,9 @@ export function createPostgresRepository(pool) {
       if (status) {
         params.push(status);
         conditions.push(`w.status = $${params.length}`);
+      } else {
+        // Без явного статуса (кабинет: черновики + опубликованные) скрываем архивные/удалённые.
+        conditions.push(`w.status <> 'archived'`);
       }
       if (createdToday) {
         conditions.push(`date(w.created_at) = current_date`);
