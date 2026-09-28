@@ -1125,18 +1125,23 @@ const resolvers = {
     },
     activateWorkAnnouncement: async (_, { workId }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
-      if (!isAdminUser(user, adminUserIds)) {
-        throw new GraphQLError('Admin only', { extensions: { code: 'FORBIDDEN' } });
+      const isAdmin = isAdminUser(user, adminUserIds);
+      const work = await repo.getWorkById(workId);
+      if (!work) throw new GraphQLError('Work not found', { extensions: { code: 'NOT_FOUND' } });
+      if (!isAdmin && String(work.author?.id ?? work.authorUserId ?? '') !== String(user.id)) {
+        throw new GraphQLError('Only the owner can announce this work', { extensions: { code: 'FORBIDDEN' } });
       }
-      return repo.activateWorkAnnouncement({ workId, activatedByUserId: user.id, isAdmin: true });
+      return repo.activateWorkAnnouncement({ workId, activatedByUserId: user.id, isAdmin });
     },
     deactivateWorkAnnouncement: async (_, { workId }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
       const isAdmin = isAdminUser(user, adminUserIds);
-      if (!isAdmin) {
-        throw new GraphQLError('Admin only', { extensions: { code: 'FORBIDDEN' } });
+      const work = await repo.getWorkById(workId);
+      if (!work) throw new GraphQLError('Work not found', { extensions: { code: 'NOT_FOUND' } });
+      if (!isAdmin && String(work.author?.id ?? work.authorUserId ?? '') !== String(user.id)) {
+        throw new GraphQLError('Only the owner can remove this announcement', { extensions: { code: 'FORBIDDEN' } });
       }
-      return repo.deactivateWorkAnnouncement({ workId });
+      return repo.deactivateWorkAnnouncement({ workId, actorUserId: user.id });
     },
     toggleWorkLike: async (_, { workId }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
