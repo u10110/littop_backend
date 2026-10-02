@@ -103,6 +103,56 @@ function sendText(res, statusCode, message) {
   res.end(message);
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function sanitizeWorkHtml(value) {
+  const source = String(value || '');
+  if (!/<[a-z][\s\S]*>/i.test(source)) return escapeHtml(source).replace(/\n/g, '<br>');
+  return source
+    .replace(/<\/?(?:script|style|iframe|object|embed|form|input|button)[^>]*>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/\s(?:href|src)\s*=\s*(?:"\s*javascript:[^"]*"|'\s*javascript:[^']*'|javascript:[^\s>]+)/gi, '')
+    .replace(/<(?!\/?(?:p|br|strong|b|em|i|u|s|code|ul|ol|li|blockquote|h[1-6]|a)(?:\s|>|\/))[^>]*>/gi, '');
+}
+
+function workReaderHtml(work) {
+  const title = work?.title || 'Произведение не найдено';
+  const authorName = work?.author?.displayName || work?.author?.login || 'Автор не указан';
+  const authorUrl = work?.author?.login ? `/authors/${encodeURIComponent(work.author.login)}` : '/authors';
+  const workUrl = work?.slug ? `/works/${encodeURIComponent(work.slug)}` : '/works';
+  const text = work ? sanitizeWorkHtml(work.body || work.summary || work.excerpt || 'Текст пока не добавлен.') : 'Произведение не найдено.';
+  const heading = work ? escapeHtml(title) : 'Произведение не найдено';
+  return `<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${heading} — Литопотам</title>
+<style>body{margin:0;background:#f5efe4;color:#332d27;font:16px/1.5 Georgia,'Times New Roman',serif}.shell{max-width:760px;margin:0 auto;padding:32px 20px 48px}.eyebrow{font:600 11px/1.2 Arial,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#8b6f47}h1{margin:8px 0;font-size:clamp(28px,5vw,42px);line-height:1.15}a{color:#754025}.author{margin:0 0 28px}.work-text{font-size:17px;line-height:1.5;overflow-wrap:anywhere}.work-text p{margin:0 0 12px}.work-text p:last-child{margin-bottom:0}.work-text blockquote{margin:16px 0;padding-left:18px;border-left:3px solid #d7b68e}.back{display:inline-block;margin-top:34px;font:14px/1.4 Arial,sans-serif}</style>
+</head><body><main class="shell"><span class="eyebrow">Версия без JavaScript</span><h1>${heading}</h1>${work ? `<p class="author">Автор: <a href="${authorUrl}">${escapeHtml(authorName)}</a></p>` : ''}<article class="work-text">${text}</article><a class="back" href="${workUrl}">Вернуться к интерактивной версии</a></main></body></html>`;
+}
+
+async function handleNoJsWorkReaderRequest({ req, res, pathname, repo }) {
+  const match = pathname.match(/^\/read\/works\/([^/]+)$/);
+  if (!match) return false;
+  if (req.method !== 'GET') {
+    sendText(res, 405, 'Method not allowed');
+    return true;
+  }
+  const slug = decodeURIComponent(match[1]);
+  const work = await repo.getWorkBySlug(slug);
+  const statusCode = work?.status === 'published' ? 200 : 404;
+  res.statusCode = statusCode;
+  res.setHeader('content-type', 'text/html; charset=utf-8');
+  res.setHeader('cache-control', 'no-cache');
+  res.end(workReaderHtml(statusCode === 200 ? work : null));
+  return true;
+}
+
 function redirect(res, location) {
   res.statusCode = 302;
   res.setHeader('location', location);
@@ -982,6 +1032,10 @@ export function createHttpServer({ apolloServer, repo, jwtSecret, adminUserIds =
 
       const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
       const { pathname, searchParams } = url;
+
+      if (await handleNoJsWorkReaderRequest({ req, res, pathname, repo })) {
+        return;
+      }
 
       if (await handleSocialAuthRequest({ req, res, pathname, searchParams, repo, jwtSecret, env, fetchImpl })) {
         return;
