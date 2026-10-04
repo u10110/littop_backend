@@ -150,6 +150,18 @@ const typeDefs = `#graphql
     updatedAt: String!
   }
 
+  type WorkCommentAttachment {
+    url: String!
+    fileName: String!
+    mimeType: String!
+  }
+
+  input WorkCommentAttachmentInput {
+    url: String!
+    fileName: String!
+    mimeType: String!
+  }
+
   type WorkComment {
     id: ID!
     workId: ID!
@@ -157,6 +169,7 @@ const typeDefs = `#graphql
     parentCommentId: ID
     body: String!
     imageUrl: String
+    attachments: [WorkCommentAttachment!]!
     status: String!
     likesCount: Int!
     likedByMe: Boolean!
@@ -579,8 +592,8 @@ const typeDefs = `#graphql
     toggleWorkLike(workId: ID!): Work!
     toggleWorkDislike(workId: ID!): Work!
     rateWork(workId: ID!, rating: Int!): WorkRating!
-    addWorkComment(workId: ID!, body: String!, parentCommentId: ID, imageUrl: String): WorkComment!
-    updateWorkComment(commentId: ID!, body: String!, imageUrl: String): WorkComment!
+    addWorkComment(workId: ID!, body: String!, parentCommentId: ID, imageUrl: String, attachments: [WorkCommentAttachmentInput!]): WorkComment!
+    updateWorkComment(commentId: ID!, body: String!, imageUrl: String, attachments: [WorkCommentAttachmentInput!]): WorkComment!
     deleteWorkComment(commentId: ID!): WorkComment!
     toggleWorkCommentLike(commentId: ID!): WorkComment!
     createForumTopic(input: CreateForumTopicInput!): ForumTopic!
@@ -1155,9 +1168,9 @@ const resolvers = {
       const user = requireAuth(currentUser);
       return repo.upsertWorkRating({ workId, userId: user.id, rating });
     },
-    addWorkComment: async (_, { workId, body, parentCommentId, imageUrl }, { currentUser, repo }) => {
+    addWorkComment: async (_, { workId, body, parentCommentId, imageUrl, attachments }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
-      const comment = await repo.addWorkComment({ workId, userId: user.id, body, parentCommentId, imageUrl });
+      const comment = await repo.addWorkComment({ workId, userId: user.id, body, parentCommentId, imageUrl, attachments });
       const mailer = repo.__notificationMailer;
       const frontendBaseUrl = repo.__frontendBaseUrl;
       const work = await repo.getWorkById(workId);
@@ -1186,9 +1199,9 @@ const resolvers = {
       if (!isAdminUser(currentUser, adminUserIds)) throw new GraphQLError('Only owner can change site settings', { extensions: { code: 'FORBIDDEN' } });
       return repo.upsertSiteSetting({ key, value });
     },
-    updateWorkComment: async (_, { commentId, body, imageUrl }, { currentUser, repo, adminUserIds }) => {
+    updateWorkComment: async (_, { commentId, body, imageUrl, attachments }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
-      return repo.updateWorkComment({ commentId, userId: user.id, canManageAll: isAdminUser(user, adminUserIds), body, imageUrl });
+      return repo.updateWorkComment({ commentId, userId: user.id, canManageAll: isAdminUser(user, adminUserIds), body, imageUrl, attachments });
     },
     deleteWorkComment: async (_, { commentId }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);

@@ -75,9 +75,16 @@ const IMAGE_CONTENT_TYPE_BY_EXTENSION = {
 };
 const WORK_MEDIA_EXTENSION_BY_KIND = {
   pdf: '.pdf',
+  doc: '.doc',
+  docx: '.docx',
+};
+const DOCUMENT_CONTENT_TYPE_BY_EXTENSION = {
+  '.pdf': 'application/pdf',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 };
 const WORK_MEDIA_CONTENT_TYPE_BY_EXTENSION = {
-  '.pdf': 'application/pdf',
+  ...DOCUMENT_CONTENT_TYPE_BY_EXTENSION,
   ...IMAGE_CONTENT_TYPE_BY_EXTENSION,
 };
 
@@ -355,10 +362,10 @@ function decodeBase64Image(rawValue) {
 
 function normalizeWorkMediaKind(value) {
   const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'pdf' || normalized === 'audio' || normalized === 'image') {
+  if (normalized === 'pdf' || normalized === 'audio' || normalized === 'image' || normalized === 'doc' || normalized === 'docx') {
     return normalized;
   }
-  throw new Error('kind must be pdf, audio or image');
+  throw new Error('kind must be pdf, doc, docx, audio or image');
 }
 
 function detectWorkMediaExtension({ kind, mimeType, fileName }) {
@@ -371,16 +378,20 @@ function detectWorkMediaExtension({ kind, mimeType, fileName }) {
   }
 
   const normalizedMimeType = String(mimeType || '').trim().toLowerCase();
-  if (normalizedMimeType === 'application/pdf') {
-    return '.pdf';
-  }
-
   const normalizedExtension = extname(String(fileName || '').trim()).toLowerCase();
-  if (WORK_MEDIA_CONTENT_TYPE_BY_EXTENSION[normalizedExtension]) {
+  const documentMimeByKind = {
+    pdf: 'application/pdf',
+    doc: 'application/msword',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  };
+  if (documentMimeByKind[kind] === normalizedMimeType && WORK_MEDIA_EXTENSION_BY_KIND[kind]) {
+    return WORK_MEDIA_EXTENSION_BY_KIND[kind];
+  }
+  if (WORK_MEDIA_EXTENSION_BY_KIND[kind] === normalizedExtension) {
     return normalizedExtension;
   }
 
-  throw new Error('Поддерживаются только PDF-файлы.');
+  throw new Error('Поддерживаются только PDF, DOC и DOCX.');
 }
 
 function decodeBase64WorkMedia(rawValue, kind) {
@@ -899,7 +910,7 @@ async function handleWorkMediaUploadRequest({ req, res, pathname, repo, jwtSecre
       fileName: body?.fileName,
     });
  
-    const kindPrefix = kind === 'audio' ? 'work-audio' : kind === 'image' ? 'work-image' : 'work-pdf';
+    const kindPrefix = kind === 'audio' ? 'work-audio' : kind === 'image' ? 'work-image' : `work-${kind}`;
     const storedFileName = `${kindPrefix}-${Date.now()}-${sanitizeStoredBaseName(body?.fileName)}-${randomUUID()}${fileExtension}`;
     const publicPrefix = kind === 'audio' ? AUDIO_PUBLIC_PATH_PREFIX : WORK_MEDIA_PUBLIC_PATH_PREFIX;
     const storageDir = kind === 'audio' ? resolveAudioStorageDir(env) : resolveWorkMediaStorageDir(env);

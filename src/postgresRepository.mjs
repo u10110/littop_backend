@@ -175,6 +175,7 @@ function workCommentFromRow(row) {
     parentCommentId: row.parent_comment_id,
     body: row.body,
     imageUrl: row.image_url,
+    attachments: normalizeWorkCommentAttachments(row.attachments),
     status: row.status,
     likesCount: Number(row.likes_count ?? 0),
     createdAt: row.created_at?.toISOString?.() ?? row.created_at,
@@ -460,6 +461,18 @@ function normalizeOptionalText(value) {
   if (typeof value !== 'string') return null;
   const normalized = value.trim();
   return normalized || null;
+}
+
+function normalizeWorkCommentAttachments(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 10).reduce((items, item) => {
+    const url = normalizeOptionalText(item?.url);
+    const fileName = normalizeOptionalText(item?.fileName);
+    const mimeType = normalizeOptionalText(item?.mimeType);
+    if (!url || !fileName || !mimeType) return items;
+    items.push({ url, fileName, mimeType });
+    return items;
+  }, []);
 }
 
 function normalizeAudioTracks(value) {
@@ -2846,7 +2859,8 @@ export function createPostgresRepository(pool) {
       }
     },
 
-    async addWorkComment({ workId, userId, body, parentCommentId = null, imageUrl = null }) {
+    async addWorkComment({ workId, userId, body, parentCommentId = null, imageUrl = null, attachments = [] }) {
+      const normalizedAttachments = normalizeWorkCommentAttachments(attachments);
       const client = await pool.connect();
       try {
         await client.query('begin');
@@ -2876,11 +2890,11 @@ export function createPostgresRepository(pool) {
         const workAuthorUserId = workRow.rows[0]?.author_user_id ?? null;
         const inserted = await client.query(
           `
-          insert into work_comments (work_id, user_id, parent_comment_id, body, image_url)
-          values ($1, $2, $3, $4, $5)
+    insert into work_comments (work_id, user_id, parent_comment_id, body, image_url, attachments)
+          values ($1, $2, $3, $4, $5, $6::jsonb)
           returning *
           `,
-          [workId, userId, parentCommentId, body, normalizeOptionalText(imageUrl)],
+          [workId, userId, parentCommentId, body, normalizeOptionalText(imageUrl), JSON.stringify(normalizedAttachments)],
         );
         await client.query('update works set comments_count = comments_count + 1 where id = $1', [workId]);
         if (workAuthorUserId && String(workAuthorUserId) !== String(userId)) {
@@ -2911,8 +2925,9 @@ export function createPostgresRepository(pool) {
       }
     },
 
-    async updateWorkComment({ commentId, userId, canManageAll = false, body, imageUrl = null }) {
+    async updateWorkComment({ commentId, userId, canManageAll = false, body, imageUrl = null, attachments = [] }) {
       const normalizedBody = String(body ?? '').trim();
+      const normalizedAttachments = normalizeWorkCommentAttachments(attachments);
       if (!normalizedBody) {
         throw new Error('body is required');
       }
@@ -2921,13 +2936,14 @@ export function createPostgresRepository(pool) {
         update work_comments
         set body = $1,
             image_url = $2,
+            attachments = $3::jsonb,
             updated_at = now()
-        where id = $3
+        where id = $4
           and status = 'visible'
-          and ($4::boolean = true or user_id = $5)
+          and ($5::boolean = true or user_id = $6)
         returning *
         `,
-        [normalizedBody, normalizeOptionalText(imageUrl), commentId, canManageAll, userId],
+        [normalizedBody, normalizeOptionalText(imageUrl), JSON.stringify(normalizedAttachments), commentId, canManageAll, userId],
       );
       if (!rows[0]) {
         throw new Error('Only the author can edit this comment');
