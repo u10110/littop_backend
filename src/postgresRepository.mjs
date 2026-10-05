@@ -1518,8 +1518,8 @@ export function createPostgresRepository(pool) {
       return authorFromRow(rows[0]);
     },
 
-    async registerWorkView({ workId, viewerUserId }) {
-      if (!workId || !viewerUserId) return null;
+    async registerWorkView({ workId, viewerUserId = null }) {
+      if (!workId) return null;
       const client = await pool.connect();
       try {
         await client.query('begin');
@@ -1533,17 +1533,20 @@ export function createPostgresRepository(pool) {
           [workId],
         );
         const authorUserId = workRow.rows[0]?.author_user_id ?? null;
-        const insertedView = await client.query(
-          `
-          insert into work_views (work_id, viewer_user_id, viewed_at)
-          values ($1, $2, now())
-          on conflict (work_id, viewer_user_id)
-          where viewer_user_id is not null
-          do update set viewed_at = excluded.viewed_at
-          returning id, (xmax = 0) as inserted
-          `,
-          [workId, viewerUserId],
-        );
+        let insertedView = null;
+        if (viewerUserId != null) {
+          insertedView = await client.query(
+            `
+            insert into work_views (work_id, viewer_user_id, viewed_at)
+            values ($1, $2, now())
+            on conflict (work_id, viewer_user_id)
+            where viewer_user_id is not null
+            do update set viewed_at = excluded.viewed_at
+            returning id, (xmax = 0) as inserted
+            `,
+            [workId, viewerUserId],
+          );
+        }
         if (authorUserId != null) {
           await client.query(
             `
@@ -1552,7 +1555,7 @@ export function createPostgresRepository(pool) {
             `,
             [workId, authorUserId, viewerUserId],
           );
-          if (insertedView.rows[0]?.inserted && String(authorUserId) != String(viewerUserId)) {
+          if (insertedView?.rows[0]?.inserted && String(authorUserId) != String(viewerUserId)) {
             await awardRatingEvent({
               userId: authorUserId,
               eventType: 'unique-work-reader',
@@ -1848,7 +1851,7 @@ export function createPostgresRepository(pool) {
                ap.rating_total as viewer_rating_total, ap.works_count_cached as viewer_works_count_cached,
                ap.is_classic as viewer_is_classic, ap.is_memorial_page as viewer_is_memorial_page, ap.is_featured as viewer_is_featured
         from latest
-        left join users u on u.id = latest.viewer_user_id
+        join users u on u.id = latest.viewer_user_id
         left join author_profiles ap on ap.user_id = u.id
         where coalesce(ap.is_classic, false) = false
           and coalesce(ap.is_memorial_page, false) = false

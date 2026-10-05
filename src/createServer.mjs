@@ -766,8 +766,9 @@ const resolvers = {
         return null;
       }
 
-      if (currentUser?.id && String(currentUser.id) !== String(work.author?.id ?? work.authorUserId ?? '')) {
-        await repo.registerWorkView({ workId: work.id, viewerUserId: currentUser.id });
+      const viewerUserId = currentUser?.id ?? null;
+      if (String(viewerUserId ?? '') !== String(work.author?.id ?? work.authorUserId ?? '')) {
+        await repo.registerWorkView({ workId: work.id, viewerUserId });
       }
 
       return work;
