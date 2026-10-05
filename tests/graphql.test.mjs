@@ -79,6 +79,7 @@ function makeFakeRepo() {
         updatedAt: user.updatedAt
       }));
     },
+    async registerWorkView() { return null; },
     async listWorks() {
       return works;
     },
