@@ -2072,6 +2072,7 @@ export function createPostgresRepository(pool) {
           select id
           from work_announcements
           where work_id = $1
+            and revoked_at is null
           limit 1
           `,
           [workId],
