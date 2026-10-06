@@ -2098,6 +2098,17 @@ export function createPostgresRepository(pool) {
           return await this.getWorkById(workId);
         }
 
+        const revoked = await client.query(
+          `
+          select id
+          from work_announcements
+          where work_id = $1
+            and revoked_at is not null
+          limit 1
+          `,
+          [workId],
+        );
+
         const stats = await client.query('select count(*)::int as cnt from work_announcements where revoked_at is null');
         const activeCount = Number(stats.rows[0]?.cnt ?? 0);
         if (activeCount >= 12) {
@@ -2159,13 +2170,27 @@ export function createPostgresRepository(pool) {
           [workId],
         );
 
-        await client.query(
-          `
-          insert into work_announcements (work_id, activated_by_user_id, expires_at)
-          values ($1, $2, now() + interval '7 days')
-          `,
-          [workId, activatedByUserId],
-        );
+        if (revoked.rows[0]) {
+          await client.query(
+            `
+            update work_announcements
+            set activated_by_user_id = $2,
+                expires_at = now() + interval '7 days',
+                revoked_at = null,
+                revoked_by_user_id = null
+            where id = $1
+            `,
+            [revoked.rows[0].id, activatedByUserId],
+          );
+        } else {
+          await client.query(
+            `
+            insert into work_announcements (work_id, activated_by_user_id, expires_at)
+            values ($1, $2, now() + interval '7 days')
+            `,
+            [workId, activatedByUserId],
+          );
+        }
 
         const authorId = work.rows[0].author_user_id;
         if (authorId) {
@@ -2471,6 +2496,7 @@ export function createPostgresRepository(pool) {
         `
         select w.*, ws.code as section_code, wg.slug as genre_slug,
                (select count(*)::int from work_likes wl where wl.work_id = w.id) as likes_count,
+               exists(select 1 from work_announcements wa where wa.work_id = w.id and wa.revoked_at is null and wa.expires_at > now()) as announcement_active,
                (select count(*)::int from public.work_dislikes wd where wd.work_id = w.id) as dislikes_count,
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
@@ -2497,7 +2523,7 @@ export function createPostgresRepository(pool) {
         `
         select w.*, ws.code as section_code, wg.slug as genre_slug,
                (select count(*)::int from work_likes wl where wl.work_id = w.id) as likes_count,
-               exists(select 1 from work_announcements wa where wa.work_id = w.id and wa.revoked_at is null) as announcement_active,
+               exists(select 1 from work_announcements wa where wa.work_id = w.id and wa.revoked_at is null and wa.expires_at > now()) as announcement_active,
                (select count(*)::int from public.work_dislikes wd where wd.work_id = w.id) as dislikes_count,
                u.id as author_id, u.email as author_email, u.login as author_login, u.registered_at as author_registered_at, u.last_seen_at as author_last_seen_at,
                u.created_at as author_created_at, u.updated_at as author_updated_at,
