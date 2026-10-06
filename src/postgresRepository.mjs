@@ -2098,6 +2098,17 @@ export function createPostgresRepository(pool) {
           return await this.getWorkById(workId);
         }
 
+        const revoked = await client.query(
+          `
+          select id
+          from work_announcements
+          where work_id = $1
+            and revoked_at is not null
+          limit 1
+          `,
+          [workId],
+        );
+
         const stats = await client.query('select count(*)::int as cnt from work_announcements where revoked_at is null');
         const activeCount = Number(stats.rows[0]?.cnt ?? 0);
         if (activeCount >= 12) {
@@ -2159,13 +2170,27 @@ export function createPostgresRepository(pool) {
           [workId],
         );
 
-        await client.query(
-          `
-          insert into work_announcements (work_id, activated_by_user_id, expires_at)
-          values ($1, $2, now() + interval '7 days')
-          `,
-          [workId, activatedByUserId],
-        );
+        if (revoked.rows[0]) {
+          await client.query(
+            `
+            update work_announcements
+            set activated_by_user_id = $2,
+                expires_at = now() + interval '7 days',
+                revoked_at = null,
+                revoked_by_user_id = null
+            where id = $1
+            `,
+            [revoked.rows[0].id, activatedByUserId],
+          );
+        } else {
+          await client.query(
+            `
+            insert into work_announcements (work_id, activated_by_user_id, expires_at)
+            values ($1, $2, now() + interval '7 days')
+            `,
+            [workId, activatedByUserId],
+          );
+        }
 
         const authorId = work.rows[0].author_user_id;
         if (authorId) {
