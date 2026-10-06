@@ -48,6 +48,9 @@ function makeFakeRepo() {
     async getUserById(id) {
       return users.find((user) => String(user.id) === String(id)) ?? null;
     },
+    async registerWorkView() {
+      return null;
+    },
     async updateUserProfile({ userId, displayName, bio = null, city = null, websiteUrl = null }) {
       const user = users.find((item) => String(item.id) === String(userId));
       if (!user) return null;
