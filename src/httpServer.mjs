@@ -12,7 +12,7 @@ import { pipeline } from "stream/promises";
 import * as fs from "fs";
 import { s3 } from "./S3.js"; // Импор
 
-import { buildContext } from './createServer.mjs';
+import { buildContext, parseReadMarkCookie } from './createServer.mjs';
 import { reportBackendError } from './errorReporter.mjs';
 import {
   buildSocialAuthFailureRedirect,
@@ -183,6 +183,21 @@ function copyGraphqlResponse(res, httpGraphQLResponse) {
     res.setHeader(key, value);
   }
   res.statusCode = httpGraphQLResponse.status || 200;
+}
+
+const ANONYMOUS_READ_COOKIE = 'littop_read_mark';
+const ANONYMOUS_READ_COOKIE_MAX_AGE_SECONDS = 365 * 24 * 60 * 60;
+
+function setAnonymousReadMarkCookie({ req, res, marks }) {
+  if (!Array.isArray(marks) || !marks.length) return;
+  const existing = parseReadMarkCookie(req?.headers?.cookie);
+  const changed = marks.some((workId) => !existing.includes(String(workId)));
+  if (!changed) return;
+  const value = marks.map((workId) => String(workId)).join(',');
+  res.setHeader(
+    'Set-Cookie',
+    `${ANONYMOUS_READ_COOKIE}=${encodeURIComponent(value)}; Path=/; Max-Age=${ANONYMOUS_READ_COOKIE_MAX_AGE_SECONDS}; SameSite=Lax`,
+  );
 }
 
 function resolvePublicBaseUrl(req, env) {
@@ -449,6 +464,7 @@ async function handleGraphqlRequest({ req, res, apolloServer, repo, jwtSecret, a
     httpGraphQLRequest,
     context: () => buildContext({ req }, { repo, jwtSecret, adminUserIds }),
   });
+  const context = await buildContext({ req }, { repo, jwtSecret, adminUserIds });
   try {
     if (response.body && response.body.kind === complete) {
       fs.appendFileSync("/tmp/gql_debug.log", "RESP_BODY: " + response.body.string.slice(0,1500) + "\n");
@@ -458,6 +474,7 @@ async function handleGraphqlRequest({ req, res, apolloServer, repo, jwtSecret, a
   } catch {}
 
   copyGraphqlResponse(res, response);
+  setAnonymousReadMarkCookie({ req, res, marks: context.anonymousReadMarks });
   if (response.status >= 500) {
     await reportBackendError({
       error: response.body.kind === 'complete' ? response.body.string : `GraphQL HTTP ${response.status}`,

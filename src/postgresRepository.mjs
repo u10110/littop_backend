@@ -2175,6 +2175,7 @@ export function createPostgresRepository(pool) {
             `
             update work_announcements
             set activated_by_user_id = $2,
+                created_at = now(),
                 expires_at = now() + interval '7 days',
                 revoked_at = null,
                 revoked_by_user_id = null
