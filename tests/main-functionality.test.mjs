@@ -433,10 +433,10 @@ function makeFakeRepo() {
   };
 }
 
-async function exec(server, repo, { query, variables, currentUser = null, adminUserIds = new Set() } = {}) {
+async function exec(server, repo, { query, variables, currentUser = null, adminUserIds = new Set(), readMark = [] } = {}) {
   const result = await server.executeOperation(
     { query, variables },
-    { contextValue: { repo, jwtSecret: 'test-secret', currentUser, authHeader: '', adminUserIds } },
+    { contextValue: { repo, jwtSecret: 'test-secret', currentUser, authHeader: '', adminUserIds, readMark, anonymousReadMarks: [] } },
   );
   if (result.body.kind !== 'single') {
     throw new Error('expected single result');
@@ -526,6 +526,31 @@ test('work(id) регистрирует просмотр для авторизо
   assert.ok(repo.calls.registerWorkView);
   assert.equal(repo.calls.registerWorkView[0][0].workId, work.id);
   assert.equal(repo.calls.registerWorkView[0][0].viewerUserId, reader.id);
+  await server.stop();
+});
+
+test('work(id) не регистрирует повторный анонимный просмотр при наличии cookie-метки', async () => {
+  const repo = makeFakeRepo();
+  const author = await repo.createUser({ email: 'a@x.ru', login: 'author', passwordHash: 'h', displayName: 'Автор' });
+  const work = await repo.createWork({ authorUserId: author.id, sectionCode: 'poetry', title: 'Стих', status: 'published' });
+  const server = await startServer(repo);
+
+  const first = await exec(server, repo, {
+    query: `query($id: ID!) { work(id: $id) { id } }`,
+    variables: { id: String(work.id) },
+  });
+  assert.equal(errorsOf(first).length, 0);
+  assert.ok(repo.calls.registerWorkView, 'первый анонимный просмотр без cookie регистрируется');
+  assert.equal(repo.calls.registerWorkView[0][0].viewerUserId, null);
+
+  repo.calls.registerWorkView = null;
+  const second = await exec(server, repo, {
+    query: `query($id: ID!) { work(id: $id) { id } }`,
+    variables: { id: String(work.id) },
+    readMark: [String(work.id)],
+  });
+  assert.equal(errorsOf(second).length, 0);
+  assert.equal(repo.calls.registerWorkView, null, 'повторный анонимный просмотр с меткой не регистрируется');
   await server.stop();
 });
 

@@ -7,6 +7,37 @@ import { decodeToken, getCurrentUserFromHeader, hashPassword, issueToken, verify
 
 const CURRENT_TERMS_VERSION = '2026-06-28';
 const ACCOUNT_REOPEN_WINDOW_MS = 365 * 24 * 60 * 60 * 1000;
+const ANONYMOUS_READ_COOKIE = 'littop_read_mark';
+const ANONYMOUS_READ_COOKIE_MAX_WORKS = 100;
+
+export function parseReadMarkCookie(cookieHeader) {
+  const raw = String(cookieHeader ?? '')
+    .split(';')
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${ANONYMOUS_READ_COOKIE}=`));
+  if (!raw) return [];
+  let decoded = '';
+  try { decoded = decodeURIComponent(raw.slice(ANONYMOUS_READ_COOKIE.length + 1)); } catch { decoded = ''; }
+  return decoded
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, ANONYMOUS_READ_COOKIE_MAX_WORKS);
+}
+
+function hasReadMark({ readMark, workId }) {
+  const key = String(workId ?? '');
+  if (!key) return true;
+  return Array.isArray(readMark) && readMark.includes(key);
+}
+
+function markWorkRead({ readMark, workId }) {
+  const key = String(workId ?? '');
+  if (!key) return readMark;
+  const next = readMark.includes(key) ? readMark : [...readMark, key];
+  if (next.length > ANONYMOUS_READ_COOKIE_MAX_WORKS) next.splice(0, next.length - ANONYMOUS_READ_COOKIE_MAX_WORKS);
+  return next;
+}
 
 const typeDefs = `#graphql
   type Health {
@@ -751,7 +782,7 @@ const resolvers = {
     announcements: async (_, args, { repo }) => repo.listAnnouncedWorks(args),
     recentWorkComments: async (_, args, { repo }) => repo.listRecentWorkComments(args),
     unreadDirectMessagesCount: async (_, __, { repo, currentUser }) => repo.countUnreadDirectMessages({ userId: requireAuth(currentUser).id }),
-    work: async (_, args, { repo, currentUser }) => {
+    work: async (_, args, { repo, currentUser, readMark, anonymousReadMarks }) => {
       const work = args.id
         ? await repo.getWorkById(args.id)
         : args.slug
@@ -768,7 +799,13 @@ const resolvers = {
 
       const viewerUserId = currentUser?.id ?? null;
       if (String(viewerUserId ?? '') !== String(work.author?.id ?? work.authorUserId ?? '')) {
-        await repo.registerWorkView({ workId: work.id, viewerUserId });
+        const alreadyMarked = viewerUserId == null && hasReadMark({ readMark, workId: work.id });
+        if (!alreadyMarked) {
+          await repo.registerWorkView({ workId: work.id, viewerUserId });
+          if (viewerUserId == null && Array.isArray(anonymousReadMarks)) {
+            anonymousReadMarks.push(work.id);
+          }
+        }
       }
 
       return work;
@@ -1397,5 +1434,7 @@ export async function buildContext({ req }, { repo, jwtSecret, adminUserIds = ne
   if (currentUser?.id && typeof repo.touchUserPresence === 'function') {
     await repo.touchUserPresence(currentUser.id);
   }
-  return { repo, jwtSecret, authHeader, currentUser, adminUserIds, decodeToken };
+  const readMark = parseReadMarkCookie(req?.headers?.cookie);
+  const anonymousReadMarks = [];
+  return { repo, jwtSecret, authHeader, currentUser, adminUserIds, decodeToken, readMark, anonymousReadMarks };
 }
