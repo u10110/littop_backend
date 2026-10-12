@@ -460,11 +460,11 @@ async function handleGraphqlRequest({ req, res, apolloServer, repo, jwtSecret, a
     body,
   };
 
+  const context = await buildContext({ req }, { repo, jwtSecret, adminUserIds });
   const response = await apolloServer.executeHTTPGraphQLRequest({
     httpGraphQLRequest,
-    context: () => buildContext({ req }, { repo, jwtSecret, adminUserIds }),
+    context: () => context,
   });
-  const context = await buildContext({ req }, { repo, jwtSecret, adminUserIds });
   try {
     if (response.body && response.body.kind === complete) {
       fs.appendFileSync("/tmp/gql_debug.log", "RESP_BODY: " + response.body.string.slice(0,1500) + "\n");
