@@ -865,14 +865,20 @@ async function handleAdminWorkImageGenerationRequest({ req, res, pathname, repo,
   if (req.method !== 'POST') { sendText(res, 405, 'Method not allowed'); return true; }
   const context = await buildContext({ req }, { repo, jwtSecret, adminUserIds });
   const user = context.currentUser;
-  if (!user || !(user.role === 'admin' || adminUserIds?.has(String(user.id)))) {
-    sendJson(res, user ? 403 : 401, { error: user ? 'Admin access required' : 'Authentication required' });
+  if (!user) {
+    sendJson(res, 401, { error: 'Authentication required' });
     return true;
   }
   const workId = match[1];
   try {
     const work = await repo.getWorkById(workId);
     if (!work) { sendJson(res, 404, { error: 'Произведение не найдено' }); return true; }
+    const isAdmin = user.role === 'admin' || adminUserIds?.has(String(user.id));
+    const isOwner = String(work.author?.id ?? work.authorUserId ?? '') === String(user.id);
+    if (!isAdmin && !isOwner) {
+      sendJson(res, 403, { error: 'Only the work author or an administrator may generate an image' });
+      return true;
+    }
     if (String(work.imageUrl || '').trim()) {
       sendJson(res, 409, { error: 'У произведения уже есть изображение', imageUrl: work.imageUrl });
       return true;
