@@ -270,6 +270,8 @@ function forumPostFromRow(row) {
     parentPostId: row.parent_post_id,
     body: row.body,
     imageUrl: row.image_url,
+    audioUrl: row.audio_url ?? null,
+    audioFileName: row.audio_file_name ?? null,
     status: row.status,
     createdAt: row.created_at?.toISOString?.() ?? row.created_at,
     updatedAt: row.updated_at?.toISOString?.() ?? row.updated_at,
@@ -3307,7 +3309,7 @@ export function createPostgresRepository(pool) {
       }
     },
 
-    async createForumPost({ topicId, authorUserId, body, parentPostId = null, imageUrl = null }) {
+    async createForumPost({ topicId, authorUserId, body, parentPostId = null, imageUrl = null, audioUrl = null, audioFileName = null }) {
       const client = await pool.connect();
       try {
         await client.query('begin');
@@ -3337,11 +3339,11 @@ export function createPostgresRepository(pool) {
         const topicAuthorUserId = topicRow.rows[0]?.author_user_id ?? null;
         const inserted = await client.query(
           `
-          insert into forum_posts (topic_id, author_user_id, parent_post_id, body, image_url)
-          values ($1, $2, $3, $4, $5)
+          insert into forum_posts (topic_id, author_user_id, parent_post_id, body, image_url, audio_url, audio_file_name)
+          values ($1, $2, $3, $4, $5, $6, $7)
           returning *
           `,
-          [topicId, authorUserId, parentPostId, body, normalizeOptionalText(imageUrl)],
+          [topicId, authorUserId, parentPostId, body, normalizeOptionalText(imageUrl), normalizeOptionalText(audioUrl), audioUrl ? normalizeOptionalText(audioFileName) : null],
         );
         await client.query(
           `update forum_topics set replies_count = replies_count + 1, last_post_at = now() where id = $1`,
@@ -3375,7 +3377,7 @@ export function createPostgresRepository(pool) {
       }
     },
 
-    async updateForumPost({ postId, authorUserId, canManageAll = false, body, imageUrl = null }) {
+    async updateForumPost({ postId, authorUserId, canManageAll = false, body, imageUrl = null, audioUrl = undefined, audioFileName = undefined }) {
       const normalizedBody = String(body ?? '').trim();
       if (!normalizedBody) {
         throw new Error('body is required');
@@ -3386,11 +3388,14 @@ export function createPostgresRepository(pool) {
         update forum_posts
         set body = $1,
             image_url = $2,
+            audio_url = case when $6::boolean then $7 else audio_url end,
+            audio_file_name = case when $6::boolean then $8 else audio_file_name end,
             updated_at = now()
         where id = $3 and ($4::boolean = true or author_user_id = $5)
         returning *
         `,
-        [normalizedBody, normalizeOptionalText(imageUrl), postId, canManageAll, authorUserId],
+        [normalizedBody, normalizeOptionalText(imageUrl), postId, canManageAll, authorUserId,
+          audioUrl !== undefined, normalizeOptionalText(audioUrl), audioUrl ? normalizeOptionalText(audioFileName) : null],
       );
       if (!rows[0]) {
         throw new Error('Only the owner can edit this message');

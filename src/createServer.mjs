@@ -298,6 +298,8 @@ const typeDefs = `#graphql
     parentPostId: ID
     body: String!
     imageUrl: String
+    audioUrl: String
+    audioFileName: String
     status: String!
     createdAt: String!
     updatedAt: String!
@@ -633,8 +635,8 @@ const typeDefs = `#graphql
     closeForumTopic(topicId: ID!): ForumTopic!
     openForumTopic(topicId: ID!): ForumTopic!
     incrementForumTopicViews(topicId: ID!): ForumTopic!
-    createForumPost(topicId: ID!, body: String!, parentPostId: ID, imageUrl: String): ForumPost!
-    updateForumPost(postId: ID!, body: String!, imageUrl: String): ForumPost!
+    createForumPost(topicId: ID!, body: String!, parentPostId: ID, imageUrl: String, audioUrl: String, audioFileName: String): ForumPost!
+    updateForumPost(postId: ID!, body: String!, imageUrl: String, audioUrl: String, audioFileName: String): ForumPost!
     deleteForumPost(postId: ID!): ForumPost!
     sendPrivateMessage(recipientUserId: ID, recipientLogin: String, body: String!): PrivateMessage!
     markPrivateMessagesRead(withUserId: ID, withLogin: String): Int!
@@ -1292,9 +1294,9 @@ const resolvers = {
       }
       return topic;
     },
-    createForumPost: async (_, { topicId, body, parentPostId, imageUrl }, { currentUser, repo }) => {
+    createForumPost: async (_, { topicId, body, parentPostId, imageUrl, audioUrl, audioFileName }, { currentUser, repo }) => {
       const user = requireAuth(currentUser);
-      const post = await repo.createForumPost({ topicId, body, parentPostId, imageUrl, authorUserId: user.id });
+      const post = await repo.createForumPost({ topicId, body, parentPostId, imageUrl, audioUrl, audioFileName, authorUserId: user.id });
       const mailer = repo.__notificationMailer;
       const frontendBaseUrl = repo.__frontendBaseUrl;
       const topic = await repo.getForumTopic({ id: topicId });
@@ -1309,9 +1311,9 @@ const resolvers = {
       }
       return post;
     },
-    updateForumPost: async (_, { postId, body, imageUrl }, { currentUser, repo, adminUserIds }) => {
+    updateForumPost: async (_, { postId, body, imageUrl, audioUrl, audioFileName }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);
-      return repo.updateForumPost({ postId, body, imageUrl, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds) });
+      return repo.updateForumPost({ postId, body, imageUrl, audioUrl, audioFileName, authorUserId: user.id, canManageAll: isAdminUser(user, adminUserIds) });
     },
     deleteForumPost: async (_, { postId }, { currentUser, repo, adminUserIds }) => {
       const user = requireAuth(currentUser);

@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createApolloServer } from '../src/createServer.mjs';
+import { createHttpServer } from '../src/httpServer.mjs';
+import { issueToken } from '../src/auth.mjs';
+
+test('authenticated audio upload is served publicly with correct MIME; guests and invalid formats rejected', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'forum-audio-'));
+  const user = { id:'7', login:'test', role:'author', status:'active' };
+  const repo = { async getUserById(id) { return id === '7' ? user : null; } };
+  const jwtSecret = 'test-secret';
+  const apolloServer = createApolloServer({repo, jwtSecret}); await apolloServer.start();
+  const nodeServer = createHttpServer({apolloServer, repo, jwtSecret, env:{AUDIO_UPLOAD_DIR:dir}});
+  await new Promise(resolve => nodeServer.listen(0,'127.0.0.1',resolve));
+  t.after(async () => { await new Promise(resolve => nodeServer.close(resolve)); await apolloServer.stop(); await rm(dir,{recursive:true,force:true}); });
+  const base = `http://127.0.0.1:${nodeServer.address().port}`;
+  const token = issueToken(user,jwtSecret);
+  const data = {kind:'audio',fileName:'test.mp3',mimeType:'audio/mpeg',contentBase64:Buffer.from('ID3-test-audio').toString('base64')};
+  const send = (payload, auth) => fetch(`${base}/api/works/upload-file`,{method:'POST',headers:{'content-type':'application/json',...(auth?{authorization:`Bearer ${token}`}:{})},body:JSON.stringify(payload)});
+  assert.equal((await send(data,false)).status,401);
+  assert.equal((await send({...data,fileName:'file.exe',mimeType:'application/x-msdownload'},true)).status,400);
+  const upload = await send(data,true); assert.equal(upload.status,201);
+  const stored = await upload.json(); assert.match(stored.url,/\/media\/audio\//);
+  const resource = await fetch(stored.url); assert.equal(resource.status,200);
+  assert.match(resource.headers.get('content-type'),/^audio\/mpeg/);
+  assert.equal(Buffer.from(await resource.arrayBuffer()).toString(),'ID3-test-audio');
+});
